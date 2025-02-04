@@ -3,106 +3,6 @@ use std::array::from_fn;
 use std::ops::Range;
 use super_seq_macro::seq;
 
-///////////////////////////////////////////////////////////
-
-/// Compute the binomial coefficient (n choose k)
-pub fn binomial(n: usize, k: usize) -> usize {
-    let numerator: usize = (1..=k).map(|i| n + 1 - i).product();
-    let denominator: usize = (1..=k).product();
-    numerator / denominator
-}
-
-/*
-/// Convert a polynomial of degree N to Bernstein basis
-/// c_m: The coefficients of the polynomial in monomial form
-/// i.e. the polynomial = sum of c_m * [1, x, x^2]
-/// For example, x^2 + x - 6 would be represented as [-6, 1, 1]
-fn bernstein_coef<A, O, S: Shape, T: Ring + Rational + std::iter::Sum>(c_m: &A, out: &mut O)
-where
-    for<'a> &'a A: Into<View<'a, S, [T]>>,
-    for<'a> &'a mut O: Into<ViewMut<'a, S, [T]>>,
-{
-    let c_m = c_m.into();
-    let mut out = out.into();
-
-    for (i, out_entry) in (&mut out).into_iter().nd_enumerate() {
-        *out_entry = (..=i)
-            .nd_iter()
-            .map(|j| {
-                let num: usize = i
-                    .into_iter()
-                    .zip(j.into_iter())
-                    .map(|(i_n, j_n)| binomial(i_n, j_n))
-                    .product();
-                let den: usize = S::SHAPE
-                    .into_iter()
-                    .zip(j.into_iter())
-                    .map(|(d_n, j_n)| binomial(d_n - 1, j_n))
-                    .product();
-                let b = T::from_fraction(num.try_into().unwrap(), den.try_into().unwrap());
-                b * c_m[j]
-            })
-            .sum();
-    }
-}
-*/
-
-/*
-fn bernstein_coef2<T: Ring + Rational + std::iter::Sum, const N0: usize, const N1: usize>(
-    c_m: &[[T; N1]; N0],
-    out: &mut [[T; N1]; N0],
-) {
-    for (i0, e1) in out.iter_mut().enumerate() {
-        for (i1, e) in e1.iter_mut().enumerate() {
-            *e = (0..=i0)
-                .flat_map(move |j0| {
-                    (0..=i1).map(move |j1| {
-                        let num = binomial(i0, j0) * binomial(i1, j1);
-                        let den = binomial(N0 - 1, j0) * binomial(N1 - 1, j1);
-                        let b = T::from_fraction(num.try_into().unwrap(), den.try_into().unwrap());
-                        b * c_m[j0][j1]
-                    })
-                })
-                .sum();
-        }
-    }
-}
-
-fn bernstein_coef3<
-    T: Ring + Rational + std::iter::Sum,
-    const N0: usize,
-    const N1: usize,
-    const N2: usize,
->(
-    c_m: &[[[T; N2]; N1]; N0],
-    out: &mut [[[T; N2]; N1]; N0],
-) {
-    for (i0, e0) in out.iter_mut().enumerate() {
-        for (i1, e1) in e0.iter_mut().enumerate() {
-            for (i2, e) in e1.iter_mut().enumerate() {
-                *e = (0..=i0)
-                    .flat_map(move |j0| {
-                        (0..=i1).flat_map(move |j1| {
-                            (0..=i2).map(move |j2| {
-                                let num = binomial(i0, j0) * binomial(i1, j1) * binomial(i2, j2);
-                                let den = binomial(N0 - 1, j0)
-                                    * binomial(N1 - 1, j1)
-                                    * binomial(N2 - 1, j2);
-                                let b = T::from_fraction(
-                                    num.try_into().unwrap(),
-                                    den.try_into().unwrap(),
-                                );
-                                b * c_m[j0][j1][j2]
-                            })
-                        })
-                    })
-                    .sum();
-            }
-        }
-    }
-}
-*/
-
 macro_rules! ndarray_t {
     ($t:ty; ()) => {
         $t
@@ -132,6 +32,7 @@ macro_rules! ndfor {
     };
 }
 
+/*
 macro_rules! ndmap {
     ($block:block) => {
         $block
@@ -145,39 +46,16 @@ macro_rules! ndmap {
         $expr.flat_map(move |$pat| ndmap!($($pats in $exprs,)* $block))
     };
 }
-/*
-macro_rules! ndmap {
-    (() .map(|()| $block:expr )) => {
-        $block
-    };
-
-    (($first:expr,) .map ( | ($arg:pat,) | $block:expr )) => {
-        $first.map(move |$arg|
-            $block
-        )
-    };
-
-    (($first:expr, $($rest:expr,)*) .map ( | ($arg:pat, $($args:pat,)*) | $block:expr )) => {
-        $first.flat_map(move |$arg|
-            ndmap!(($($rest,)*) .map( |($($args,)*)| $block))
-        )
-    };
-}
 */
 
-/*
-fn foo() {
-    let mut out = &mut [[[0]]];
+///////////////////////////////////////////////////////////
 
-    ndfor!((i0, e0) in out.iter_mut().enumerate(), (i1, e1) in e0.iter_mut().enumerate(), (i2, e) in e1.iter_mut().enumerate(), {
-        todo!()
-    });
-
-    let (i0, i1, i2) = (1, 2, 3);
-
-    //ndmap!(((0..=i0), (0..=i1), (0..=i2),).map(|(j0,j1,j2,)| { todo!(); }));
+/// Compute the binomial coefficient (n choose k)
+pub fn binomial(n: usize, k: usize) -> usize {
+    let numerator: usize = (1..=k).map(|i| n + 1 - i).product();
+    let denominator: usize = (1..=k).product();
+    numerator / denominator
 }
-*/
 
 seq!(D in 1..=6 {#(
     seq!(A in 0..D {
@@ -185,24 +63,25 @@ seq!(D in 1..=6 {#(
         /// c_m: D-dimensional array containing the coefficients of the polynomial in monomial form
         /// i.e. the polynomial = sum of c_m * [1, x, x^2]
         /// For example, x^2 + x - 6 would be represented as [-6, 1, 1]
-        pub fn bernstein_coef~D<
-            T: Ring + Rational + std::iter::Sum,
+        pub fn from_monomial~D<
+            T: Ring + Rational,
             #( const N~A: usize, )*
         >(
             c_m: & ndarray_t![T; (#( N~A, )*) ] ,
         ) -> ndarray_t![T; (#( N~A, )*) ] {
             let mut out = ndarray![T::zero(); (#( N~A, )*) ];
             ndfor!(#(i~A in 0..N~A,)* {
-                out #( [i~A] )* = ndmap!( #( j~A in (0..=i~A), )* {
+                let mut s = T::zero();
+                ndfor!( #( j~A in 0..=i~A, )* {
                     let num = 1 #( * binomial(i~A, j~A) )*;
                     let den = 1 #( * binomial(N~A - 1, j~A) )*;
                     let b = T::from_fraction(
                         num.try_into().unwrap(),
                         den.try_into().unwrap(),
                     );
-                    b * c_m #( [j~A] )*
-                })
-                .sum();
+                    s += b * c_m #( [j~A] )*;
+                });
+                out #( [i~A] )* = s;
             });
             out
         }
@@ -311,7 +190,13 @@ pub fn span<T: Ring + Rational + PartialOrd + Recip<Output = T>, const MP1: usiz
     })
 }
 
-pub fn decasteljau_split<const N: usize, T: Ring>(
+/// Perform an affine transform on the parameter of a univariate Bernstein polynomial.
+/// The output polynomial evaluated at 0..1 will map to the input polynomial on the range u..v.
+///
+/// The input and output are both taken from a scratchpad matrix,
+/// where the input is read from the first row,
+/// and the output is placed in the first column.
+fn decasteljau_split<const N: usize, T: Ring>(
     matrix: &mut [[T; N]; N],
     Range { start: u, end: v }: Range<T>,
 ) {
@@ -337,16 +222,21 @@ pub fn decasteljau_split<const N: usize, T: Ring>(
 
 seq!(D in 1..=6 {#(
     seq!(A in 0..D {
+        /// Perform an affine transform on the domain of a D-variate Bernstein polynomial.
+        /// The output polynomial evaluated at [0, 0, .., 0]..[1, 1, .., 1]
+        /// will map to the input polynomial on the range [u_0, u_1, .., u_D]..[v_0, v_1, .., v_D].
+        /// c: D-dimensional array containing the coefficients of the polynomial in Bernstein form
+        /// u..v: The portion of the input domain which will be mapped to 0..1 in the output domain
         pub fn change_domain~D<
-            T: Ring + Rational + std::iter::Sum,
+            T: Ring + Rational,
             #( const N~A: usize, )*
         >(
             c: &ndarray_t![T; (#( N~A, )*) ] ,
-            Range { start, end }: Range<[T; D]>,
+            Range { start: u, end: v }: Range<[T; D]>,
         ) -> ndarray_t![T; (#( N~A, )*) ] {
             let mut out = c.clone();
             #(
-                // Axis A
+                // Axis A of D
                 seq!(B in (0..D).collect().filter(|x| x != A) {
                     ndfor!( #( i~B in 0..N~B, )* {
                         let mut decasteljau_matrix = [[T::zero(); N~A]; N~A];
@@ -357,7 +247,7 @@ seq!(D in 1..=6 {#(
                             });
                         }
                         // Compute the new domain along this lane
-                        decasteljau_split(&mut decasteljau_matrix, start[A]..end[A]);
+                        decasteljau_split(&mut decasteljau_matrix, u[A]..v[A]);
                         // Copy the result from the matrix back into the lane
                         for i~A in 0..N~A {
                             #(
@@ -375,58 +265,12 @@ seq!(D in 1..=6 {#(
 )*});
 
 /*
-pub fn change_domain<A, B, const N0: usize, const N1: usize, const N2: usize, T: Ring + Rational>(
-    c: &A,
-    Range { start, end }: Range<[T; 3]>,
-    out: &mut B,
-) where
-    for<'a> &'a A: Into<View<'a, (Const<N0>, Const<N1>. Const<N2>), [T]>>,
-    for<'a> &'a mut B: Into<ViewMut<'a, (Const<N0>, Const<N1>, Const<N2>), [T]>>,
-{
-
-    let c = c.into();
-    let out = out.into();
-
-    //let m = MP1 - 1;
-
-    let flip_start: [T; N] = from_fn(|i| T::one() - start[i]);
-    let flip_end: [T; N] = from_fn(|i| T::one() - end[i]);
-
-    for n0 in 0..N0 {
-        for n1 in 0..N1 {
-        }
-    }
-
-    // TODO(optimizations):
-    // * lerp_layer1 could be flipped to avoid indexing from the back
-    // * the two lerp layers could be done sequentially
-    // * the results could then be collected instead of filled in
-
-    // Populate bottom row of the triangle with the existing control points
-    let mut lerp_layer1 = c.clone();
-    let mut lerp_layer2 = c.clone();
-    for i in 0..=m {
-        // Output the right-most and left-most entries as new knots of the middle interval
-        c_out[m - i] = lerp_layer1[m - i];
-        c_out[i] = lerp_layer2[0];
-
-        // Compute the next lerp_layer (i + 1)
-        for i2 in 0..(m - i) {
-            lerp_layer1[i2] = flip_start * lerp_layer1[i2] + start * lerp_layer1[i2 + 1];
-            lerp_layer2[i2] = flip_end * lerp_layer2[i2] + end * lerp_layer2[i2 + 1];
-        }
-    }
-
-    c_out
-}
-
 pub fn bernstein_root_search<
     T: Ring + Rational + PartialOrd + Recip<Output = T>,
-    const MP1: usize,
+    const N0: usize,
 >(
-    cs: &[[T; MP1]],
+    cs: &[[T; N0]],
     region: Range<T>,
-    tol: T, // How accurately to compute the root
 ) -> Vec<T> {
     let mut roots = Vec::<T>::new();
     let mut regions_to_process = vec![region];
@@ -437,7 +281,7 @@ pub fn bernstein_root_search<
         //iters += 1;
         if let Some(region_shrunk) = cs
             .iter()
-            .map(|c| span(&change_domain(c, region.clone()), region.clone()))
+            .map(|c| span(&change_domain1(c, region.clone()), region.clone()))
             .reduce(|acc, item| match (acc, item) {
                 (
                     Some(Range {
@@ -515,14 +359,151 @@ pub fn bernstein_root_search<
 }
 */
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RegionCategory {
+    NoRoot,
+    Unknown,
+    OneRoot,
+}
+
+pub fn categorize_region<const N0: usize, T: Ring + PartialOrd + std::fmt::Debug>(
+    c: &[T; N0],
+) -> RegionCategory {
+    const {
+        assert!(N0 != 0, "Array must contain at least 1 value");
+    }
+
+    println!("ANALYZE {:?}", c);
+
+    // Check whether all coefficients are positive or all coefficients are negative
+    let all_positive = c.into_iter().all(|a| a > &T::zero());
+    let all_negative = c.into_iter().all(|a| a < &T::zero());
+
+    if all_positive || all_negative {
+        return RegionCategory::NoRoot;
+    }
+
+    // Check whether all coefficients are monotonically increasing or monotonically decreasing
+    let monotonic_increasing = c[..]
+        .into_iter()
+        .zip(c[1..].into_iter())
+        .all(|(a, b)| b >= a);
+
+    let monotonic_decreasing = c[..]
+        .into_iter()
+        .zip(c[1..].into_iter())
+        .all(|(a, b)| b <= a);
+
+    if monotonic_increasing || monotonic_decreasing {
+        return RegionCategory::OneRoot;
+    }
+
+    RegionCategory::Unknown
+}
+
+fn _decasteljau_eval<const N0: usize, T: Ring>(arr: &[T; N0], [t]: [T; 1]) -> T {
+    let inv_t = T::one() - t;
+    let mut arr = arr.clone();
+
+    for layer in 1..N0 {
+        // for each "layer"
+        let width = N0 - layer;
+        for i in 0..width {
+            arr[i] = arr[i] * inv_t + arr[i + 1] * t;
+        }
+    }
+
+    arr[0]
+}
+
+fn _derivative<const N0: usize, const M0: usize, T: Ring>(c: &[T; N0]) -> [T; M0] {
+    const {
+        assert!(N0 == M0 + 1);
+    }
+
+    let mut out = [T::zero(); M0];
+
+    for i in 0..M0 {
+        let n = T::from_integer((N0 - 2).try_into().unwrap());
+        out[i] = n * (c[i + 1] - c[i]);
+    }
+
+    out
+}
+
+pub fn root_search<
+    T: Ring + Rational + PartialOrd + Recip<Output = T> + std::fmt::Debug,
+    const N0: usize,
+>(
+    cs: &[[T; N0]],
+    region: Range<[T; 1]>,
+) -> Vec<T> {
+    let mut roots = Vec::<T>::new();
+    let mut regions_to_process = vec![region];
+
+    while let Some(Range {
+        start: [u0],
+        end: [v0],
+    }) = regions_to_process.pop()
+    {
+        println!("Process region [{u0:?}]..[{v0:?}]");
+        // See if this region has no width in any dimension
+        if u0 == v0 {
+            roots.push(u0);
+            continue;
+        }
+
+        // See if we can make an assessment of this region
+        let cat = cs
+            .iter()
+            .map(|c| categorize_region(&change_domain1(&c, [u0]..[v0])))
+            .min() // NoRoot < Unknown < OneRoot
+            .unwrap_or(RegionCategory::NoRoot);
+        match cat {
+            RegionCategory::NoRoot => {
+                // Ignore this region
+                println!("No root!");
+            }
+            //RegionCategory::OneRoot => {
+            //    // Newton-Raphson or box contraction
+            //    let Range {
+            //        start: [u0],
+            //        end: [v0],
+            //    } = region;
+            //    let mut t = T::one_half() * (u0 + v0); // Start with an initial guess at the
+            //                                           // midpoint of the region
+
+            //    loop {
+            //        let t = t - decasteljau_eval(c, t) * decasteljau_eval(c_derivative, t).recip();
+            //    }
+            //}
+            RegionCategory::Unknown | RegionCategory::OneRoot => {
+                // TODO don't subdivide once we
+                // are down to OneRoot
+                // Subdivide
+                println!("Subdivide!");
+                let t0 = T::one_half() * (u0 + v0);
+                if t0 == u0 || t0 == v0 {
+                    regions_to_process.push([t0]..[t0]);
+                } else {
+                    regions_to_process.push([u0]..[t0]);
+                    regions_to_process.push([t0]..[v0]);
+                }
+            }
+        }
+    }
+
+    roots
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    pub fn test_bernstein_coef() {
+    pub fn test_from_monomial() {
         let c_m = [0., -1., 1.];
-        let c_b = bernstein_coef1(&c_m);
+        let c_b = from_monomial1(&c_m);
         assert_eq!(c_b, [0., -0.5, 0.]);
     }
 
@@ -553,12 +534,11 @@ mod tests {
         assert_eq!(c, [-5., -25., -25., -5.]);
     }
 
-    /*
     #[test]
     pub fn test_root_finding_1() {
         let c_m = [-0.2, 1.4, -1.1];
-        let c_b = bernstein_coef(&c_m);
-        let mut roots = bernstein_root_search(&[c_b], (0.)..(2.), 1e-5);
+        let c_b = from_monomial1(&c_m);
+        let mut roots = root_search(&[c_b], [0.]..[2.]);
 
         assert!(roots.len() == 2);
 
@@ -571,8 +551,8 @@ mod tests {
     #[test]
     pub fn test_root_finding_2() {
         let c_m = [-0.042, 0.55, -1.4, 1.];
-        let c_b = bernstein_coef(&c_m);
-        let mut roots = bernstein_root_search(&[c_b], (0.)..(1.), 1e-5);
+        let c_b = from_monomial1(&c_m);
+        let mut roots = root_search(&[c_b], [0.]..[1.]);
 
         dbg!(&roots);
         assert!(roots.len() == 3);
@@ -587,13 +567,12 @@ mod tests {
     #[test]
     pub fn test_root_finding_3() {
         let c_m = [0.25, -1., 1.];
-        let c_b = bernstein_coef(&c_m);
-        let roots = bernstein_root_search(&[c_b], (0.)..(1.), 1e-5);
+        let c_b = from_monomial1(&c_m);
+        let roots = root_search(&[c_b], [0.]..[1.]);
 
         dbg!(&roots);
         assert!(roots.len() == 1);
 
         assert!((roots[0] - 0.5).abs() < 1e-5);
     }
-    */
 }
