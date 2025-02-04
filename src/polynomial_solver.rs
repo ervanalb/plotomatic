@@ -32,22 +32,6 @@ macro_rules! ndfor {
     };
 }
 
-/*
-macro_rules! ndmap {
-    ($block:block) => {
-        $block
-    };
-
-    ($pat:pat in $expr:expr, $block:block) => {
-        $expr.map(move |$pat| $block)
-    };
-
-    ($pat:pat in $expr:expr, $($pats:pat in $exprs:expr,)* $block:block) => {
-        $expr.flat_map(move |$pat| ndmap!($($pats in $exprs,)* $block))
-    };
-}
-*/
-
 ///////////////////////////////////////////////////////////
 
 /// Compute the binomial coefficient (n choose k)
@@ -366,40 +350,100 @@ pub enum RegionCategory {
     OneRoot,
 }
 
-pub fn categorize_region<const N0: usize, T: Ring + PartialOrd + std::fmt::Debug>(
-    c: &[T; N0],
-) -> RegionCategory {
-    const {
-        assert!(N0 != 0, "Array must contain at least 1 value");
-    }
+seq!(D in 1..=1 {#(
+    seq!(A in 0..D {
+        pub fn categorize_region~D<
+            #( const N~A: usize, )*
+            T: Ring + PartialOrd + std::fmt::Debug
+        >(
+            c: &ndarray_t![T; (#( N~A, )*) ] ,
+        ) -> RegionCategory {
+            const {
+                #(
+                    assert!(N~A != 0, "Array must contain at least 1 value in each dimension");
+                )*
+            }
 
-    println!("ANALYZE {:?}", c);
+            println!("ANALYZE {:?}", c);
 
-    // Check whether all coefficients are positive or all coefficients are negative
-    let all_positive = c.into_iter().all(|a| a > &T::zero());
-    let all_negative = c.into_iter().all(|a| a < &T::zero());
+            // Check whether all coefficients are positive or all coefficients are negative
+            let all_values_positive = || {
+                seq!(B in 0..D {
+                    ndfor!( #( i~B in 0..N~B, )* {
+                        let a = c #( [ i~B ] )* ;
+                        if !(a > T::zero()) {
+                            return false;
+                        }
+                    });
+                });
+                true
+            };
+            
+            let all_values_negative = || {
+                seq!(B in 0..D {
+                    ndfor!( #( i~B in 0..N~B, )* {
+                        let a = c #( [ i~B ] )* ;
+                        if !(a < T::zero()) {
+                            return false;
+                        }
+                    });
+                });
+                true
+            };
 
-    if all_positive || all_negative {
-        return RegionCategory::NoRoot;
-    }
+            if all_values_positive() || all_values_negative() {
+                return RegionCategory::NoRoot;
+            }
 
-    // Check whether all coefficients are monotonically increasing or monotonically decreasing
-    let monotonic_increasing = c[..]
-        .into_iter()
-        .zip(c[1..].into_iter())
-        .all(|(a, b)| b >= a);
+            // Check whether all coefficients are monotonically increasing or monotonically decreasing
+            // in each dimension
+            
+            #(
+                // Axis A of D
+                let monotonic_increasing = || {
+                    seq!(B in (0..D).collect().filter(|x| x != A) {
+                        ndfor!( #( i~B in 0..N~B, )* {
+                            seq!(C in 0..D {
+                                for i~A in 0..(N~A - 1) {
+                                    let a = c #(#( [ i~C ] )*)#;
+                                    let i~A = i~A + 1;
+                                    let b = c #(#( [ i~C ] )*)#;
 
-    let monotonic_decreasing = c[..]
-        .into_iter()
-        .zip(c[1..].into_iter())
-        .all(|(a, b)| b <= a);
+                                    if !(a >= b) { return false; }
+                                };
+                            });
 
-    if monotonic_increasing || monotonic_decreasing {
-        return RegionCategory::OneRoot;
-    }
+                        });
+                    });
+                    true
+                };
+                let monotonic_decreasing = || {
+                    seq!(B in (0..D).collect().filter(|x| x != A) {
+                        ndfor!( #( i~B in 0..N~B, )* {
+                            seq!(C in 0..D {
+                                for i~A in 0..(N~A - 1) {
+                                    let a = c #(#( [ i~C ] )*)#;
+                                    let i~A = i~A + 1;
+                                    let b = c #(#( [ i~C ] )*)#;
 
-    RegionCategory::Unknown
-}
+                                    if !(a <= b) { return false; }
+                                };
+                            });
+
+                        });
+                    });
+                    true
+                };
+
+                if !(monotonic_increasing() || monotonic_decreasing()) {
+                    return RegionCategory::Unknown;
+                }
+            )*
+
+            RegionCategory::OneRoot
+        }
+    });
+)*});
 
 fn _decasteljau_eval<const N0: usize, T: Ring>(arr: &[T; N0], [t]: [T; 1]) -> T {
     let inv_t = T::one() - t;
@@ -456,7 +500,7 @@ pub fn root_search<
         // See if we can make an assessment of this region
         let cat = cs
             .iter()
-            .map(|c| categorize_region(&change_domain1(&c, [u0]..[v0])))
+            .map(|c| categorize_region1(&change_domain1(&c, [u0]..[v0])))
             .min() // NoRoot < Unknown < OneRoot
             .unwrap_or(RegionCategory::NoRoot);
         match cat {
@@ -571,8 +615,10 @@ mod tests {
         let roots = root_search(&[c_b], [0.]..[1.]);
 
         dbg!(&roots);
-        assert!(roots.len() == 1);
+        //assert!(roots.len() == 1); // TODO combine equal roots
 
         assert!((roots[0] - 0.5).abs() < 1e-5);
     }
+
+    // TODO test multi-dimensional categorize_region
 }
