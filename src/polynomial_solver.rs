@@ -350,7 +350,7 @@ pub enum RegionCategory {
     OneRoot,
 }
 
-seq!(D in 1..=1 {#(
+seq!(D in 1..=6 {#(
     seq!(A in 0..D {
         pub fn categorize_region~D<
             #( const N~A: usize, )*
@@ -368,25 +368,21 @@ seq!(D in 1..=1 {#(
 
             // Check whether all coefficients are positive or all coefficients are negative
             let all_values_positive = || {
-                seq!(B in 0..D {
-                    ndfor!( #( i~B in 0..N~B, )* {
-                        let a = c #( [ i~B ] )* ;
-                        if !(a > T::zero()) {
-                            return false;
-                        }
-                    });
+                ndfor!( #( i~A in 0..N~A, )* {
+                    let a = c #( [ i~A ] )* ;
+                    if !(a > T::zero()) {
+                        return false;
+                    }
                 });
                 true
             };
             
             let all_values_negative = || {
-                seq!(B in 0..D {
-                    ndfor!( #( i~B in 0..N~B, )* {
-                        let a = c #( [ i~B ] )* ;
-                        if !(a < T::zero()) {
-                            return false;
-                        }
-                    });
+                ndfor!( #( i~A in 0..N~A, )* {
+                    let a = c #( [ i~A ] )* ;
+                    if !(a < T::zero()) {
+                        return false;
+                    }
                 });
                 true
             };
@@ -620,5 +616,38 @@ mod tests {
         assert!((roots[0] - 0.5).abs() < 1e-5);
     }
 
-    // TODO test multi-dimensional categorize_region
+    #[test]
+    pub fn categorize_region_2d_one_root() {
+        let c = [[10., -1., -10.],
+                 [20., 0., -5.],
+                 [30., 1., -3.]];
+        // This polynomial is monotonically increasing in top-to-bottom and right-to-left
+        // and it spans zero
+        // so it should have exactly 1 root
+
+        assert_eq!(categorize_region2(&c), RegionCategory::OneRoot);
+    }
+
+    #[test]
+    pub fn categorize_region_2d_no_roots() {
+        let c = [[1., 2., 3.],
+                 [2., 3., 4.],
+                 [3., 4., 5.]];
+        // This polynomial is monotonically increasing in top-to-bottom and left-to-right
+        // but it doesn't span zero
+        // so it should have no roots
+
+        assert_eq!(categorize_region2(&c), RegionCategory::NoRoot);
+    }
+
+    #[test]
+    pub fn categorize_region_2d_unknown() {
+        let c = [[-10., -10., -10.],
+                 [-10., 10., -10.],
+                 [-10., -10., -10.]];
+        // This polynomial is not monotonic
+        // and spans 0, so we can't tell how many roots it has
+
+        assert_eq!(categorize_region2(&c), RegionCategory::Unknown);
+    }
 }
