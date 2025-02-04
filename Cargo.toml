@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 ngeom = { path = "../ngeom/crates/ngeom" }
 ngeom-polygon = { path = "../ngeom/crates/ngeom-polygon" }
+#ndarray = "0.16.1"
+#nada = { path = "../nada" }
 enum_dispatch = "0.3.13"
 env_logger = "0.10"
 log = "0.4"
@@ -18,3 +20,4 @@ rayon = "1.10.0"
 tempfile = "3.14.0"
 base64 = "0.22.1"
 ahash = "0.8.11"
+super-seq-macro = "0.3.7"
