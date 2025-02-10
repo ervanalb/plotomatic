@@ -471,70 +471,221 @@ fn _derivative<const N0: usize, const M0: usize, T: Ring>(c: &[T; N0]) -> [T; M0
     out
 }
 
-pub fn root_search<
-    T: Ring + Rational + PartialOrd + Recip<Output = T> + std::fmt::Debug,
-    const N0: usize,
->(
-    cs: &[[T; N0]],
-    region: Range<[T; 1]>,
-) -> Vec<T> {
-    let mut roots = Vec::<T>::new();
-    let mut regions_to_process = vec![region];
+macro_rules! subdivide_ndpush {
+    ($vec:ident $tol:ident $([$($start:ident,)*]..[$($end:ident,)*])*) => {
+        $(
+            $vec.push([$($start,)*]..[$($end,)*]);
+        )*
+    };
 
-    while let Some(Range {
-        start: [u0],
-        end: [v0],
-    }) = regions_to_process.pop()
-    {
-        println!("Process region [{u0:?}]..[{v0:?}]");
-        // See if this region has no width in any dimension
-        if u0 == v0 {
-            roots.push(u0);
-            continue;
+    ($vec:ident $tol:ident $u0:ident $t0:ident $v0:ident, $($u:ident $t:ident $v:ident,)* $([$($start:ident,)*]..[$($end:ident,)*])*) => {
+        if ($u0 - $v0) < $tol && ($u0 - $v0) > -$tol {
+            subdivide_ndpush!($vec $tol $($u $t $v,)* $([$($start,)* $t0,]..[$($end,)* $t0,])*);
+        } else {
+            subdivide_ndpush!($vec $tol $($u $t $v,)* $([$($start,)* $u0,]..[$($end,)* $t0,])* $([$($start,)* $t0,]..[$($end,)* $v0,])* );
         }
+    };
+}
 
-        // See if we can make an assessment of this region
-        let cat = cs
-            .iter()
-            .map(|c| categorize_region1(&change_domain1(&c, [u0]..[v0])))
-            .min() // NoRoot < Unknown < OneRoot
-            .unwrap_or(RegionCategory::NoRoot);
-        match cat {
-            RegionCategory::NoRoot => {
-                // Ignore this region
-                println!("No root!");
-            }
-            //RegionCategory::OneRoot => {
-            //    // Newton-Raphson or box contraction
-            //    let Range {
-            //        start: [u0],
-            //        end: [v0],
-            //    } = region;
-            //    let mut t = T::one_half() * (u0 + v0); // Start with an initial guess at the
-            //                                           // midpoint of the region
+seq!(D in 1..=6 {#(
+    seq!(A in 0..D {
+        pub fn root_search~D<
+            #( const N~A: usize, )*
+            T: Ring + Rational + PartialOrd + Recip<Output = T> + std::fmt::Debug,
+        >(
+            cs: &[ndarray_t![T; (#( N~A, )*) ]],
+            region: Range<[T; D]>,
+            tol: T,
+        ) -> Vec<[T; D]> {
+            let mut roots = Vec::<[T; D]>::new();
+            let mut regions_to_process = vec![region];
 
-            //    loop {
-            //        let t = t - decasteljau_eval(c, t) * decasteljau_eval(c_derivative, t).recip();
-            //    }
-            //}
-            RegionCategory::Unknown | RegionCategory::OneRoot => {
-                // TODO don't subdivide once we
-                // are down to OneRoot
-                // Subdivide
-                println!("Subdivide!");
-                let t0 = T::one_half() * (u0 + v0);
-                if t0 == u0 || t0 == v0 {
-                    regions_to_process.push([t0]..[t0]);
-                } else {
-                    regions_to_process.push([u0]..[t0]);
-                    regions_to_process.push([t0]..[v0]);
+            while let Some(Range {
+                start: [#( u~A, )*],
+                end: [#( v~A, )*],
+            }) = regions_to_process.pop()
+            {
+                println!("Process region {:?}..{:?}", [#( u~A, )*], [#( v~A, )*]);
+                // See if this region has no width in any dimension
+                if true #( && u~A == v~A )* {
+                    roots.push([ #( u~A, )* ]);
+                    continue;
+                }
+
+                // See if we can make an assessment of this region
+                let cat = cs
+                    .iter()
+                    .map(|c| categorize_region~D(&change_domain~D(&c, [#( u~A, )*]..[#( v~A, )*])))
+                    .min() // NoRoot < Unknown < OneRoot
+                    .unwrap_or(RegionCategory::NoRoot);
+                match cat {
+                    RegionCategory::NoRoot => {
+                        // Ignore this region
+                        println!("No root!");
+                    }
+                    RegionCategory::OneRoot => {
+                        println!("One root!");
+
+                        // TODO don't subdivide once we are down to one root
+                        // TODO use Newton-Raphson or box contraction
+                        #(
+                            let t~A = T::one_half() * (u~A + v~A);
+                        )*
+
+                        subdivide_ndpush!(regions_to_process tol #(u~A t~A v~A,)* []..[]);
+                    }
+                    RegionCategory::Unknown => {
+                        // Subdivide
+                        println!("Subdivide!");
+                        #(
+                            let t~A = T::one_half() * (u~A + v~A);
+                        )*
+
+                        subdivide_ndpush!(regions_to_process tol #(u~A t~A v~A,)* []..[]);
+                    }
                 }
             }
-        }
-    }
 
-    roots
-}
+            roots
+        }
+    });
+)*});
+
+seq!(N in 2..=6 {#(
+    pub fn adjugate~N<
+        T: Ring + Rational,
+    >(
+        mat: &[[T; N]; N],
+    ) -> [[T; N]; N] {
+        // Unpack matrix into local variables
+        seq!(CODE in {
+            let code = [];
+            for i in 0..N {
+                for j in 0..N {
+                    code.push($"let r${i}_c${j} = mat[${i}][${j}];"$);
+                }
+            }
+            code
+        } {#( CODE )*});
+
+        // Compute successively larger determinants, from 2x2 up to (N-1) x (N-1)
+        seq!(CODE in {
+            // Helper functions
+            let cartesian_product = |a| {
+                let acc = [[]];
+                
+                loop {
+                    let last = a.pop();
+                    if last.type_of() == "()" {
+                        return acc;
+                    }
+
+                    let new_acc = [];
+                    for e1 in last {
+                        for e2 in acc {
+                            new_acc.push([e1] + e2);
+                        }
+                    }
+                    acc = new_acc;
+                }
+                acc
+            };
+
+            let strictly_increasing = |a| {
+                let prev = a.pop();
+                if prev.type_of() == "()" {
+                    return true;
+                }
+                loop {
+                    let e = a.pop();
+                    if e.type_of() == "()" {
+                        return true;
+                    } else if e >= prev {
+                        return false;
+                    }
+                    prev = e;
+                }
+            };
+
+            let choose = |a, k| {
+                let acc = [];
+                
+                for i in 0..k {
+                    acc.push(a);
+                }
+                cartesian_product.call(acc).filter(strictly_increasing)
+            };
+
+            let sub_name = |r, c| {
+                let r_str = r.reduce(|acc, x| acc + x, "");
+                let c_str = c.reduce(|acc, x| acc + x, "");
+                $"r${r_str}_c${c_str}"$
+            };
+
+            let code = [];
+
+            for det_n in 2..N {
+                // Compute determinants of size det_n
+                // We never need the first row (unless we are at the largest level,
+                // computing all the minors of the original matrix)
+                let row_options = ((if det_n == N - 1 { 0 } else { 1 })..N).collect();
+                let col_options = (0..N).collect();
+
+                for rowscols in cartesian_product.call([choose.call(row_options, det_n), choose.call(col_options, det_n)]) {
+                    let rows = rowscols[0];
+                    let cols = rowscols[1];
+
+                    // Compute the determinant of the sub-matrix
+                    // composed of the intersection of these rows & cols
+                    // by expanding along the first row (a)
+                    // and using a previously-computed smaller determinant (b)
+                    let a_row = rows[0];
+                    let b_rows = rows.filter(|r| r != a_row);
+
+                    let expr = "";
+                    let sign = 1;
+                    let first = true;
+                    for a_col in cols {
+                        if !first {
+                            expr += " + ";
+                        }
+                        let b_cols = cols.filter(|c| c != a_col);
+                        if sign < 0 {
+                            expr += "-";
+                        }
+                        expr += $"${sub_name.call([a_row], [a_col])} * ${sub_name.call(b_rows, b_cols)}"$;
+                        sign *= -1;
+                        first = false;
+                    }
+                    code.push($"let ${sub_name.call(rows, cols)} = ${expr};"$);
+                }
+            }
+
+            // Collect the result into a 2D array
+            let adjugate_entry = |row, col| {
+                let minor_rows = (0..N).collect().filter(|i| i != row);
+                let minor_cols = (0..N).collect().filter(|i| i != col);
+                let neg = if (row + col) % 2 == 0 { "" } else { "-" };
+                neg + sub_name.call(minor_cols, minor_rows) // Note transposition
+            };
+
+            let result_expr = "[";
+            for row in 0..N {
+                result_expr += "[";
+                for col in 0..N {
+                    result_expr += adjugate_entry.call(row, col) + ",";
+                }
+                result_expr += "],";
+            }
+            result_expr += "]";
+
+            code.push($"let result = ${result_expr};"$);
+
+            code
+        } {#( CODE )*});
+        result
+    }
+)*});
 
 #[cfg(test)]
 mod tests {
@@ -578,49 +729,47 @@ mod tests {
     pub fn test_root_finding_1() {
         let c_m = [-0.2, 1.4, -1.1];
         let c_b = from_monomial1(&c_m);
-        let mut roots = root_search(&[c_b], [0.]..[2.]);
+        let mut roots = root_search1(&[c_b], [0.]..[2.], 1e-5);
 
         assert!(roots.len() == 2);
 
         roots.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        assert!((roots[0] - 0.16398614).abs() < 1e-5);
-        assert!((roots[1] - 1.10874113).abs() < 1e-5);
+        assert!((roots[0][0] - 0.16398614).abs() < 1e-5);
+        assert!((roots[1][0] - 1.10874113).abs() < 1e-5);
     }
 
     #[test]
     pub fn test_root_finding_2() {
         let c_m = [-0.042, 0.55, -1.4, 1.];
         let c_b = from_monomial1(&c_m);
-        let mut roots = root_search(&[c_b], [0.]..[1.]);
+        let mut roots = root_search1(&[c_b], [0.]..[1.], 1e-5);
 
         dbg!(&roots);
         assert!(roots.len() == 3);
 
         roots.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        assert!((roots[0] - 0.1).abs() < 1e-5);
-        assert!((roots[1] - 0.6).abs() < 1e-5);
-        assert!((roots[2] - 0.7).abs() < 1e-5);
+        assert!((roots[0][0] - 0.1).abs() < 1e-5);
+        assert!((roots[1][0] - 0.6).abs() < 1e-5);
+        assert!((roots[2][0] - 0.7).abs() < 1e-5);
     }
 
     #[test]
     pub fn test_root_finding_3() {
         let c_m = [0.25, -1., 1.];
         let c_b = from_monomial1(&c_m);
-        let roots = root_search(&[c_b], [0.]..[1.]);
+        let roots = root_search1(&[c_b], [0.]..[1.], 1e-5);
 
         dbg!(&roots);
         //assert!(roots.len() == 1); // TODO combine equal roots
 
-        assert!((roots[0] - 0.5).abs() < 1e-5);
+        assert!((roots[0][0] - 0.5).abs() < 1e-5);
     }
 
     #[test]
     pub fn categorize_region_2d_one_root() {
-        let c = [[10., -1., -10.],
-                 [20., 0., -5.],
-                 [30., 1., -3.]];
+        let c = [[10., -1., -10.], [20., 0., -5.], [30., 1., -3.]];
         // This polynomial is monotonically increasing in top-to-bottom and right-to-left
         // and it spans zero
         // so it should have exactly 1 root
@@ -630,9 +779,7 @@ mod tests {
 
     #[test]
     pub fn categorize_region_2d_no_roots() {
-        let c = [[1., 2., 3.],
-                 [2., 3., 4.],
-                 [3., 4., 5.]];
+        let c = [[1., 2., 3.], [2., 3., 4.], [3., 4., 5.]];
         // This polynomial is monotonically increasing in top-to-bottom and left-to-right
         // but it doesn't span zero
         // so it should have no roots
@@ -642,12 +789,22 @@ mod tests {
 
     #[test]
     pub fn categorize_region_2d_unknown() {
-        let c = [[-10., -10., -10.],
-                 [-10., 10., -10.],
-                 [-10., -10., -10.]];
+        let c = [[-10., -10., -10.], [-10., 10., -10.], [-10., -10., -10.]];
         // This polynomial is not monotonic
         // and spans 0, so we can't tell how many roots it has
 
         assert_eq!(categorize_region2(&c), RegionCategory::Unknown);
+    }
+
+    #[test]
+    pub fn test_2d_root_finding() {
+        let f1 = [[-9. / 16., 0., 1.], [0., 0., 0.], [1., 0., 0.]]; // x^2 + y^2 - 9/16 = 0
+        let f2 = [[3. / 4., 0., 1.], [-2., 0., 0.], [1., 0., 0.]]; // x^2 - 2x + y^2 + 3/4 = 0
+        let c1 = from_monomial2(&f1);
+        let c2 = from_monomial2(&f2);
+        let roots = root_search2(&[c1, c2], [-1., -1.]..[1., 1.], 0.001);
+
+        dbg!(&roots);
+        panic!();
     }
 }
