@@ -352,22 +352,14 @@ pub enum RegionCategory {
 
 seq!(D in 1..=6 {#(
     seq!(A in 0..D {
-        pub fn categorize_region~D<
+        pub fn contains_no_roots~D<
             #( const N~A: usize, )*
             T: Ring + PartialOrd + std::fmt::Debug
         >(
             c: &ndarray_t![T; (#( N~A, )*) ] ,
-        ) -> RegionCategory {
-            const {
-                #(
-                    assert!(N~A != 0, "Array must contain at least 1 value in each dimension");
-                )*
-            }
-
-            println!("ANALYZE {:?}", c);
-
+        ) -> bool {
             // Check whether all coefficients are positive or all coefficients are negative
-            let all_values_positive = || {
+            let all_positive = || {
                 ndfor!( #( i~A in 0..N~A, )* {
                     let a = c #( [ i~A ] )* ;
                     if !(a > T::zero()) {
@@ -376,8 +368,8 @@ seq!(D in 1..=6 {#(
                 });
                 true
             };
-            
-            let all_values_negative = || {
+        
+            let all_negative = || {
                 ndfor!( #( i~A in 0..N~A, )* {
                     let a = c #( [ i~A ] )* ;
                     if !(a < T::zero()) {
@@ -387,56 +379,146 @@ seq!(D in 1..=6 {#(
                 true
             };
 
-            if all_values_positive() || all_values_negative() {
-                return RegionCategory::NoRoot;
-            }
+            all_positive() || all_negative()
+        }
+    });
+)*});
 
-            // Check whether all coefficients are monotonically increasing or monotonically decreasing
-            // in each dimension
-            
+seq!(D in 1..=6 {#(
+    seq!(A in 0..D {
+        pub fn exactly_one_root~D<
+            const N: usize,
+            T: Ring + Rational + PartialOrd + Sqrt<Output=T> + std::fmt::Debug
+        >(
+            cs: &[ndarray_t![T; (#( N, )*) ]; D],
+        ) -> bool {
+
+            // TODO better epsilon handling
+            let tol = T::from_fraction(1, 10_000);
+
+            // Perform Poincare-Miranda existance check.
+            // Due to preconditioning, equation N should be positive
+            // on the left side of dimension N
+            // and negative on the right side of dimension N.
+
             #(
-                // Axis A of D
-                let monotonic_increasing = || {
-                    seq!(B in (0..D).collect().filter(|x| x != A) {
-                        ndfor!( #( i~B in 0..N~B, )* {
-                            seq!(C in 0..D {
-                                for i~A in 0..(N~A - 1) {
-                                    let a = c #(#( [ i~C ] )*)#;
-                                    let i~A = i~A + 1;
-                                    let b = c #(#( [ i~C ] )*)#;
-
-                                    if !(a >= b) { return false; }
-                                };
-                            });
-
+                // For each equation / axis A
+                let c = cs[A];
+                seq!(B in (0..D).collect().filter(|x| x != A) {
+                    ndfor!( #( i~B in 0..N, )* {
+                        seq!(C in 0..D {
+                            let i~A = 0; // Ensure left side is positive
+                            if c #(#( [ i~C ] )*)# < T::zero() {
+                                return false;
+                            }
+                            let i~A = N - 1; // Ensure right side is negative
+                            if c #(#( [ i~C ] )*)# > T::zero() {
+                                return false;
+                            }
                         });
                     });
-                    true
-                };
-                let monotonic_decreasing = || {
-                    seq!(B in (0..D).collect().filter(|x| x != A) {
-                        ndfor!( #( i~B in 0..N~B, )* {
-                            seq!(C in 0..D {
-                                for i~A in 0..(N~A - 1) {
-                                    let a = c #(#( [ i~C ] )*)#;
-                                    let i~A = i~A + 1;
-                                    let b = c #(#( [ i~C ] )*)#;
+                });
+            )*
+            // Existance test passed!
 
-                                    if !(a <= b) { return false; }
-                                };
+            // Perform Elbert-Kim uniqueness test.
+            // Due to preconditioning, the bundle of normals of surface N
+            // should be clustered around the vector pointing in direction N,
+            // and we will use this vector as the central vector.
+
+            #(
+                // For each equation A
+
+                // Compute the partial derivatives of c, for all axes B != A,
+                // summing up the squares into the first element of the normal bundle ndarray
+                seq!(B in 0..D {
+                    let mut normal_bundle = ndarray![[T::zero(); 2]; ( #( N, )* ) ];
+                });
+                seq!(B in (0..D).collect().filter(|x| x != A) {#(
+                    // Compute the partial derivative of c with respect to axis B,
+                    // with degree elevation to maintain squareness
+                    seq!(C in (0..D).collect().filter(|x| x != B) {
+                        ndfor!( #( i~C in 0..N, )* {
+                            seq!(E in 0..D {
+                                // Store the univariate polynomial we are processing in a temporary variable
+                                let mut c_u: [T; N] = from_fn(|i~B| c #(#( [i~E] )*)#);
+
+                                in_place_univariate_derivative_and_degree_elevation(&mut c_u);
+
+                                // Store the univariate polynomial into the output
+                                for i~B in 0..N {
+                                    // Accumulate sum of squares
+                                    normal_bundle #(#( [i~E] )*)# [0] += c_u[i~B] * c_u[i~B];
+                                }
                             });
-
                         });
                     });
-                    true
-                };
+                )*});
 
-                if !(monotonic_increasing() || monotonic_decreasing()) {
-                    return RegionCategory::Unknown;
-                }
+                // Take the square root
+                // TODO is this necessary!?
+                seq!(B in 0..D {
+                    ndfor!( #( i~B in 0..N, )* {
+                        normal_bundle #( [i~B] )* [0] = normal_bundle #( [i~B] )* [0].sqrt(); 
+                    });
+                });
+
+                // Compute the remaining partial derivative of c with respect to axis A
+                // and put it in the second element
+                seq!(B in (0..D).collect().filter(|x| x != A) {
+                    ndfor!( #( i~B in 0..N, )* {
+                        seq!(C in 0..D {
+                            // Store the univariate polynomial we are processing in a temporary variable
+                            let mut c_u: [T; N] = from_fn(|i~A| c #(#( [i~C] )*)#);
+
+                            in_place_univariate_derivative_and_degree_elevation(&mut c_u);
+
+                            // Store the univariate polynomial into the output
+                            for i~A in 0..N {
+                                // This is the projective dimension--
+                                // we expect all of these to be definitively positive
+                                if c_u[i~A] < tol {
+                                    return false;
+                                }
+                                normal_bundle #(#( [i~C] )*)# [1] = c_u[i~A];
+                            }
+                        });
+                    });
+                });
+
+                // Now that we have the normal bundle [x, w] pairs,
+                // find the normal vector with the largest deviation (largest x / w)
+                let mut max_normal = [T::zero(), T::one()];
+                seq!(B in 0..D {
+                    ndfor!( #( i~B in 0..N, )* {
+                        let e = normal_bundle #( [i~B] )*;
+                        if e[0] * max_normal[1] > max_normal[0] * e[1] {
+                            max_normal = e;
+                        }
+                    });
+                });
+                let max_normal~A = max_normal;
             )*
 
-            RegionCategory::OneRoot
+            // Now that we have found the max normal deviation in each axis,
+            // we will see if any two axes have overlapping normal cones.
+            // If the sum of the two axes' max normal deviations is > 90 degrees,
+            // then they overlap.
+
+            #(
+                seq!(B in A..D {#(
+                    // Given a vector [x, w], tan(theta) = x / w.
+                    // The "sum of angles" formula for tangent tells us that if tan(a) * tan(b) > 1,
+                    // then a + b > 90 degrees.
+                    if max_normal~A[0] * max_normal~B[0] > max_normal~A[1] * max_normal~B[1] {
+                        // Overlapping tangent cones
+                        return false;
+                    }
+                )*});
+            )*
+
+            // Uniqueness test passed!
+            true
         }
     });
 )*});
@@ -471,6 +553,30 @@ fn _derivative<const N0: usize, const M0: usize, T: Ring>(c: &[T; N0]) -> [T; M0
     out
 }
 
+fn in_place_univariate_derivative_and_degree_elevation<const N: usize, T: Ring + Rational>(
+    c: &mut [T; N],
+) {
+    // Univariate derivative
+    let derivative_degree = T::from_integer((N - 2).try_into().unwrap());
+    for i in 0..(N - 1) {
+        c[i + 1] = derivative_degree * (c[i + 1] - c[i]);
+    }
+
+    // Univariate degree elevation
+
+    // Populate the last slot
+    // before N - 2 gets overwritten
+    c[N - 1] = c[N - 2];
+
+    // Work backwards
+    for i in (1..(N - 1)).rev() {
+        let a = T::from_fraction(i.try_into().unwrap(), (N - 1).try_into().unwrap());
+        let a_inv = T::from_fraction((N - 1 - i).try_into().unwrap(), (N - 1).try_into().unwrap());
+
+        c[i] = a * c[i - 1] + a_inv * c[i];
+    }
+}
+
 macro_rules! subdivide_ndpush {
     ($vec:ident $tol:ident $([$($start:ident,)*]..[$($end:ident,)*])*) => {
         $(
@@ -490,10 +596,10 @@ macro_rules! subdivide_ndpush {
 seq!(D in 1..=6 {#(
     seq!(A in 0..D {
         pub fn root_search~D<
-            #( const N~A: usize, )*
-            T: Ring + Rational + PartialOrd + Recip<Output = T> + std::fmt::Debug,
+            const N: usize,
+            T: Ring + Rational + Sqrt<Output=T> + PartialOrd + Recip<Output = T> + std::fmt::Debug,
         >(
-            cs: &[ndarray_t![T; (#( N~A, )*) ]],
+            cs: &[ndarray_t![T; (#( N, )*) ]; D],
             region: Range<[T; D]>,
             tol: T,
         ) -> Vec<[T; D]> {
@@ -512,37 +618,34 @@ seq!(D in 1..=6 {#(
                     continue;
                 }
 
-                // See if we can make an assessment of this region
-                let cat = cs
-                    .iter()
-                    .map(|c| categorize_region~D(&change_domain~D(&c, [#( u~A, )*]..[#( v~A, )*])))
-                    .min() // NoRoot < Unknown < OneRoot
-                    .unwrap_or(RegionCategory::NoRoot);
-                match cat {
-                    RegionCategory::NoRoot => {
-                        // Ignore this region
-                        println!("No root!");
-                    }
-                    RegionCategory::OneRoot => {
-                        println!("One root!");
+                // See if we can eliminate this region
+                if cs.iter().any(|c| contains_no_roots~D(c)) {
+                    // Ignore this region
+                    println!("No root!");
+                    continue;
+                }
 
-                        // TODO don't subdivide once we are down to one root
-                        // TODO use Newton-Raphson or box contraction
-                        #(
-                            let t~A = T::one_half() * (u~A + v~A);
-                        )*
+                // Precondition
+                // TODO
+                
+                if exactly_one_root~D(cs) {
+                    println!("One root!");
 
-                        subdivide_ndpush!(regions_to_process tol #(u~A t~A v~A,)* []..[]);
-                    }
-                    RegionCategory::Unknown => {
-                        // Subdivide
-                        println!("Subdivide!");
-                        #(
-                            let t~A = T::one_half() * (u~A + v~A);
-                        )*
+                    // TODO don't subdivide once we are down to one root
+                    // TODO use Newton-Raphson or box contraction
+                    #(
+                        let t~A = T::one_half() * (u~A + v~A);
+                    )*
 
-                        subdivide_ndpush!(regions_to_process tol #(u~A t~A v~A,)* []..[]);
-                    }
+                    subdivide_ndpush!(regions_to_process tol #(u~A t~A v~A,)* []..[]);
+                } else {
+                    // Subdivide
+                    println!("Subdivide!");
+                    #(
+                        let t~A = T::one_half() * (u~A + v~A);
+                    )*
+
+                    subdivide_ndpush!(regions_to_process tol #(u~A t~A v~A,)* []..[]);
                 }
             }
 
@@ -557,18 +660,7 @@ seq!(N in 2..=6 {#(
     >(
         mat: &[[T; N]; N],
     ) -> [[T; N]; N] {
-        // Unpack matrix into local variables
-        seq!(CODE in {
-            let code = [];
-            for i in 0..N {
-                for j in 0..N {
-                    code.push($"let r${i}_c${j} = mat[${i}][${j}];"$);
-                }
-            }
-            code
-        } {#( CODE )*});
 
-        // Compute successively larger determinants, from 2x2 up to (N-1) x (N-1)
         seq!(CODE in {
             // Helper functions
             let cartesian_product = |a| {
@@ -624,11 +716,19 @@ seq!(N in 2..=6 {#(
 
             let code = [];
 
+            // Unpack matrix into local variables
+            for row in 0..N {
+                for col in 0..N {
+                    code.push($"let ${sub_name.call([row], [col])} = mat[${row}][${col}];"$);
+                }
+            }
+
+            // Compute successively larger determinants, from 2x2 up to (N-1) x (N-1)
             for det_n in 2..N {
-                // Compute determinants of size det_n
-                // We never need the first row (unless we are at the largest level,
-                // computing all the minors of the original matrix)
-                let row_options = ((if det_n == N - 1 { 0 } else { 1 })..N).collect();
+                // Compute determinants of size det_n.
+                // Due to expansion around the first row,
+                // not all rows are needed depending on what det_n we are at
+                let row_options = ((N - det_n - 1)..N).collect();
                 let col_options = (0..N).collect();
 
                 for rowscols in cartesian_product.call([choose.call(row_options, det_n), choose.call(col_options, det_n)]) {
@@ -769,12 +869,12 @@ mod tests {
 
     #[test]
     pub fn categorize_region_2d_one_root() {
-        let c = [[10., -1., -10.], [20., 0., -5.], [30., 1., -3.]];
-        // This polynomial is monotonically increasing in top-to-bottom and right-to-left
-        // and it spans zero
-        // so it should have exactly 1 root
+        let c1 = [[-10., -5., -15.], [3., 0., -5.], [10., 2., 8.]];
+        let c2 = [[-8., -1., 10.], [-20., 0., 5.], [-30., 1., 3.]];
 
-        assert_eq!(categorize_region2(&c), RegionCategory::OneRoot);
+        assert!(!contains_no_roots2(&c1));
+        assert!(!contains_no_roots2(&c2));
+        assert!(exactly_one_root2(&[c1, c2]));
     }
 
     #[test]
@@ -784,17 +884,21 @@ mod tests {
         // but it doesn't span zero
         // so it should have no roots
 
-        assert_eq!(categorize_region2(&c), RegionCategory::NoRoot);
+        assert!(contains_no_roots2(&c));
     }
 
+    /*
     #[test]
     pub fn categorize_region_2d_unknown() {
         let c = [[-10., -10., -10.], [-10., 10., -10.], [-10., -10., -10.]];
         // This polynomial is not monotonic
         // and spans 0, so we can't tell how many roots it has
 
+        assert!(!contains_no_roots2(&c1));
+        assert!(!contains_no_roots2(&c2));
         assert_eq!(categorize_region2(&c), RegionCategory::Unknown);
     }
+    */
 
     #[test]
     pub fn test_2d_root_finding() {
