@@ -55,74 +55,10 @@ pub enum Curve {
 #[derive(Clone, Debug)]
 pub struct Line {}
 
-/*
-impl<SPACE: Space, VI: Index> EdgeTrait<SPACE, VI> for Line<VI> {
-    fn endpoints(&self) -> Option<(VI, VI)> {
-        Some((self.start, self.end))
-    }
-
-    fn x(
-        &self,
-        vertices: &impl VertexCollection<Space = SPACE, Index = VI>,
-        t: SPACE::Scalar,
-    ) -> SPACE::Vector {
-        vertices[self.start] * (SPACE::Scalar::one() - t) + vertices[self.end] * t
-    }
-
-    fn interpolate(
-        &self,
-        vertices: &impl VertexCollection<Space = SPACE, Index = VI>,
-        dir: Dir,
-        point_stream: &mut impl PointStream<Point = SPACE::Vector>,
-    ) {
-        point_stream.push(
-            vertices[match dir {
-                Dir::Fwd => self.start,
-                Dir::Rev => self.end,
-            }],
-        );
-    }
-}
-*/
-
 #[derive(Clone, Debug)]
 pub struct Arc {
     pub axis: Point,
 }
-
-/*
-impl<SPACE: Space, VI: Index> EdgeTrait<SPACE, VI> for Arc<SPACE, VI> {
-    fn endpoints(&self) -> Option<(VI, VI)> {
-        Some((self.start, self.end))
-    }
-
-    fn x(
-        &self,
-        vertices: &impl VertexCollection<Space = SPACE, Index = VI>,
-        t: SPACE::Scalar,
-    ) -> SPACE::Vector {
-        let start_pt = vertices[self.start];
-        start_pt.transform(SPACE::AntiEven::axis_angle(self.axis, self.end_angle * t))
-    }
-
-    fn interpolate(
-        &self,
-        vertices: &impl VertexCollection<Space = SPACE, Index = VI>,
-        dir: Dir,
-        point_stream: &mut impl PointStream<Point = SPACE::Vector>,
-    ) {
-        for i in 0..10 {
-            // TODO dynamic spacing
-            let i = match dir {
-                Dir::Fwd => i,
-                Dir::Rev => 9 - i,
-            };
-            let t = SPACE::Scalar::from(i as f32 / 10.);
-            point_stream.push(self.x(vertices, t))
-        }
-    }
-}
-*/
 
 //#[derive(Clone, Debug)]
 //pub struct Circle<SPACE: Space> {
