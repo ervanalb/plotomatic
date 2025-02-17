@@ -27,7 +27,8 @@ impl Graphics {
     pub fn new() -> Self {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
-            backends: wgpu::Backends::PRIMARY,
+            //backends: wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::GL, // TODO use vulkan
             #[cfg(target_arch = "wasm32")]
             backends: wgpu::Backends::GL,
             ..Default::default()

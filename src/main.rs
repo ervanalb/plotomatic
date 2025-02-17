@@ -1,7 +1,7 @@
-use plotomatic::*;
 use ngeom::ops::*;
 use ngeom::re2::Vector;
 use ngeom_polygon::triangulate::triangulate;
+use plotomatic::*;
 use std::mem;
 
 #[repr(C)]
@@ -110,8 +110,7 @@ fn main() {
         });
 
     r.render(r.from_time_range((0.)..(1.)), |i, c| {
-        // Vector
-        let vertices = VecVertex(vec![
+        let vertices = vec![
             Vector::point([0., 0.]),
             Vector::point([1., 0.]),
             Vector::point([1., 1.]),
@@ -120,39 +119,137 @@ fn main() {
             Vector::point([0.4 - 0.2 * r.t(i) as f32, 0.6]),
             Vector::point([0.6 - 0.2 * r.t(i) as f32, 0.6]),
             Vector::point([0.6 - 0.2 * r.t(i) as f32, 0.4]),
-        ]);
+        ];
 
-        let edges = VecEdge(vec![
-            Edge::Line(Line { start: 0, end: 1 }),
-            Edge::Arc(Arc {
-                start: 1,
+        let edges = vec![
+            Curve::Line(Line {}),
+            Curve::Arc(Arc {
                 axis: Vector::point([0., 0.]),
-                end_angle: std::f32::consts::TAU / 4.,
-                end: 3,
             }),
-            //Edge::Line(Line { start: 1, end: 3 }),
-            Edge::Line(Line { start: 3, end: 0 }),
-            // interior hole
-            Edge::Line(Line { start: 4, end: 5 }),
-            Edge::Line(Line { start: 5, end: 6 }),
-            Edge::Line(Line { start: 6, end: 7 }),
-            Edge::Line(Line { start: 7, end: 4 }),
-        ]);
+            Curve::Line(Line {}),
+            // Interior hole
+            Curve::Line(Line {}),
+            Curve::Line(Line {}),
+            Curve::Line(Line {}),
+            Curve::Line(Line {}),
+        ];
 
-        let outside_boundary = FaceBoundary {
-            edges: vec![(0, Dir::Fwd), (1, Dir::Fwd), (2, Dir::Fwd)],
+        let edge_vertices = vec![
+            EdgeVertex {
+                edge: 0,
+                vertex: 0,
+                dir: Dir::Fwd,
+            },
+            EdgeVertex {
+                edge: 0,
+                vertex: 1,
+                dir: Dir::Rev,
+            },
+            EdgeVertex {
+                edge: 1,
+                vertex: 1,
+                dir: Dir::Fwd,
+            },
+            EdgeVertex {
+                edge: 1,
+                vertex: 3,
+                dir: Dir::Rev,
+            },
+            EdgeVertex {
+                edge: 2,
+                vertex: 3,
+                dir: Dir::Fwd,
+            },
+            EdgeVertex {
+                edge: 2,
+                vertex: 0,
+                dir: Dir::Rev,
+            },
+            // Interior hole
+            EdgeVertex {
+                edge: 3,
+                vertex: 4,
+                dir: Dir::Fwd,
+            },
+            EdgeVertex {
+                edge: 3,
+                vertex: 5,
+                dir: Dir::Rev,
+            },
+            EdgeVertex {
+                edge: 4,
+                vertex: 5,
+                dir: Dir::Fwd,
+            },
+            EdgeVertex {
+                edge: 4,
+                vertex: 6,
+                dir: Dir::Rev,
+            },
+            EdgeVertex {
+                edge: 5,
+                vertex: 6,
+                dir: Dir::Fwd,
+            },
+            EdgeVertex {
+                edge: 5,
+                vertex: 7,
+                dir: Dir::Rev,
+            },
+            EdgeVertex {
+                edge: 6,
+                vertex: 7,
+                dir: Dir::Fwd,
+            },
+            EdgeVertex {
+                edge: 6,
+                vertex: 4,
+                dir: Dir::Rev,
+            },
+        ];
+
+        let face_edges = vec![
+            FaceEdge {
+                edge: 0,
+                dir: Dir::Fwd,
+            },
+            FaceEdge {
+                edge: 1,
+                dir: Dir::Fwd,
+            },
+            FaceEdge {
+                edge: 2,
+                dir: Dir::Fwd,
+            },
+            // Interior hole
+            FaceEdge {
+                edge: 3,
+                dir: Dir::Fwd,
+            },
+            FaceEdge {
+                edge: 4,
+                dir: Dir::Fwd,
+            },
+            FaceEdge {
+                edge: 5,
+                dir: Dir::Fwd,
+            },
+            FaceEdge {
+                edge: 6,
+                dir: Dir::Fwd,
+            },
+        ];
+
+        let geometry = Geometry {
+            vertices,
+            edges,
+            edge_vertices,
+            face_edges,
         };
-        let hole = FaceBoundary {
-            edges: vec![(3, Dir::Fwd), (4, Dir::Fwd), (5, Dir::Fwd), (6, Dir::Fwd)],
-        };
 
-        let faces = VecFace(vec![Face {
-            boundaries: vec![outside_boundary, hole],
-        }]);
+        let Interpolation { points, edges } = geometry.interpolate();
 
-        let Interpolation { points, uv, edges } = interpolate(&vertices, &edges, &faces, |pt| pt);
-
-        let triangles = triangulate(&uv, edges).unwrap();
+        let triangles = triangulate(&points, edges).unwrap();
 
         let vertices: Vec<_> = points
             .into_iter()
