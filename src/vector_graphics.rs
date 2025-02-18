@@ -1,11 +1,18 @@
 use ngeom::ops::*;
 use ngeom::re2;
 use ngeom_polygon::graph::EdgeSet;
+use std::collections::BTreeMap;
 
 pub type Scalar = f32;
 pub type Point = re2::Vector<Scalar>;
-pub type EdgeIndex = usize;
+
+// Indices to embedding
+pub type PointIndex = usize;
+pub type CurveIndex = usize;
+
+// Indices to topology
 pub type VertexIndex = usize;
+pub type EdgeIndex = usize;
 pub type FaceIndex = usize;
 
 pub const TAU: f32 = std::f32::consts::TAU;
@@ -35,31 +42,60 @@ pub enum FaceBoundaryElement {
     Edge(EdgeIndex, Dir),
 }
 
-#[derive(Clone, Debug)]
-pub struct Geometry {
-    pub vertices: Vec<Point>,
-    pub edges: Vec<Edge>,
-    pub faces: FaceIndex,
+/// A struct representing a single sided vertex (perhaps it could be called a half-vertex.)
+// Note: rather than have a separate Vec of Vertex structs,
+// we will perform a (purely computational) optimization
+// by storing the 0 or 2 vertices for a given edge inside the edge itself.
+// The first will be assumed to have positive direction, and the second, negative direction,
+// so we can also omit the direction field in this struct.
+// Additionally, we will store the twin's edge index, rather than the twin vertex index,
+// since not storing vertices in a Vec means there is no such thing as a VertexIndex.
+#[derive(Clone, Copy, Debug)]
+pub struct Vertex {
+    pub point: PointIndex,
+    pub twin_edge: Option<EdgeIndex>,
+}
 
-    pub face_boundary_elements: Vec<(FaceIndex, FaceBoundaryElement)>,
+// A struct representing a single sided edge (sometimes called a half-edge)
+#[derive(Clone, Copy, Debug)]
+pub struct Edge {
+    pub curve: CurveIndex,
+    pub dir: Dir,
+
+    // Half-edges conventionally store a "next" / "prev" pointer,
+    // which can be found inside of `vertices`
+    pub vertices: Option<[Vertex; 2]>,
+    pub twin: Option<EdgeIndex>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Geometry {
+    // Embedding
+    pub points: Vec<Point>,
+    pub curves: Vec<Curve>,
+
+    // Topology
+    pub edges: Vec<(FaceIndex, Edge)>,
+    pub faces: FaceIndex,
 }
 
 #[derive(Clone, Debug)]
-pub enum Edge {
+pub enum Curve {
+    SingularPoint(PointIndex),
     Line(Line),
     Arc(Arc),
 }
 
 #[derive(Clone, Debug)]
 pub struct Line {
-    pub start: VertexIndex,
-    pub end: VertexIndex,
+    pub start: PointIndex,
+    pub end: PointIndex,
 }
 
 #[derive(Clone, Debug)]
 pub struct Arc {
-    pub start: VertexIndex,
-    pub end: VertexIndex,
+    pub start: PointIndex,
+    pub end: PointIndex,
     pub axis: Point,
 }
 
@@ -81,97 +117,97 @@ pub struct Interpolation {
     pub edges: EdgeSet,
 }
 
-impl Geometry {
-    pub fn boundary_elements_for_face(
-        &self,
-        face: FaceIndex,
-    ) -> impl Iterator<Item = FaceBoundaryElement> + use<'_> {
-        self.face_boundary_elements
-            .iter()
-            .filter_map(move |&(fi, be)| (fi == face).then_some(be))
+pub struct EdgeWalker<'a> {
+    edges: &'a [(FaceIndex, Edge)],
+    next: Option<(EdgeIndex, &'a Edge)>,
+}
+
+impl<'a> Iterator for EdgeWalker<'a> {
+    type Item = (EdgeIndex, &'a Edge);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.next;
+
+        self.next = self.next.and_then(|(_, edge)| {
+            let [_, to_v] = edge.vertices?; // Discard from_v
+            let next_i = to_v.twin_edge?;
+            let (_, next_e) = &self.edges[next_i]; // Discard face_i
+            Some((next_i, next_e))
+        });
+
+        result
     }
+}
 
-    pub fn interpolate(&self, face: FaceIndex) -> Interpolation {
-        // First, interpolate the boundaries of the faces
-        // and store their connectivity
-        let mut points = vec![];
-        let mut new_pt_i = vec![usize::MAX; self.vertices.len()];
+impl Geometry {
+    pub fn interpolate(&self) -> Interpolation {
+        // Add all points to the interpolation
+        // (their indices will be preserved)
+        let mut points = self.points.clone();
 
-        let mut push_or_get_pt = |points: &mut Vec<Point>, pt: VertexIndex| -> usize {
-            let existing_i = new_pt_i[pt];
-            if existing_i != usize::MAX {
-                return existing_i;
-            }
-            let new_i = points.len();
-            points.push(self.vertices[pt]);
-            new_pt_i[pt] = new_i;
-            new_i
-        };
+        // Add all interpolated curve points
+        let mut interpolated_curve_endpoints = vec![];
+        let mut interpolated_curve_link_fwd = BTreeMap::<usize, usize>::new();
+        let mut interpolated_curve_link_rev = BTreeMap::<usize, usize>::new();
+        for curve in &self.curves {
+            interpolated_curve_endpoints.push(match curve {
+                &Curve::SingularPoint(pt) => {
+                    interpolated_curve_link_fwd.insert(pt, pt);
+                    interpolated_curve_link_rev.insert(pt, pt);
+                    (pt, pt)
+                }
+                &Curve::Line(Line { start, end }) => {
+                    interpolated_curve_link_fwd.insert(start, end);
+                    interpolated_curve_link_rev.insert(end, start);
+                    (start, end)
+                }
+                &Curve::Arc(Arc { start, end, axis }) => {
+                    let start_pt = self.points[start];
 
+                    let end_angle = {
+                        let end_pt = self.points[end];
+                        let (cos, sin) = axis
+                            .join(start_pt)
+                            .unitized()
+                            .cos_sin_angle_to(axis.join(end_pt).unitized());
+                        Scalar::from(sin).atan2(cos).rem_euclid(TAU)
+                    };
+
+                    let mut prev_pt_i = start;
+                    // TODO dynamic spacing
+                    for i in 1..10 {
+                        let t = i as f32 / 10.;
+
+                        let pt = start_pt.transform(re2::AntiEven::axis_angle(axis, end_angle * t));
+
+                        let pt_i = points.len();
+                        points.push(pt);
+                        interpolated_curve_link_fwd.insert(prev_pt_i, pt_i);
+                        interpolated_curve_link_rev.insert(pt_i, prev_pt_i);
+                        prev_pt_i = pt_i;
+                    }
+                    interpolated_curve_link_fwd.insert(prev_pt_i, end);
+                    interpolated_curve_link_rev.insert(end, prev_pt_i);
+                    (start, end)
+                }
+            })
+        }
+
+        // Add all edges
         let mut edges = EdgeSet::new();
 
-        for face_boundary_element in self.boundary_elements_for_face(face) {
-            match face_boundary_element {
-                FaceBoundaryElement::Vertex(vertex) => {
-                    // Singular point--
-                    // add a self-edge in the polygon
-                    let i = push_or_get_pt(&mut points, vertex);
-                    edges.insert(i, i);
-                }
-                FaceBoundaryElement::Edge(edge, dir) => {
-                    match &self.edges[edge] {
-                        &Edge::Line(Line { start, end }) => {
-                            let (start, end) = (start, end).with_dir(dir);
-                            let i = push_or_get_pt(&mut points, start);
-                            let j = push_or_get_pt(&mut points, end);
-                            edges.insert(i, j);
-                        }
-                        &Edge::Arc(Arc { start, end, axis }) => {
-                            let start_pt = self.vertices[start];
-                            let end_pt = self.vertices[end];
-
-                            let mut prev_pt_i = push_or_get_pt(
-                                &mut points,
-                                match dir {
-                                    Dir::Fwd => start,
-                                    Dir::Rev => end,
-                                },
-                            );
-                            // TODO dynamic spacing
-                            for i in 1..10 {
-                                let i = match dir {
-                                    Dir::Fwd => i,
-                                    Dir::Rev => 10 - i,
-                                };
-                                let t = i as f32 / 10.;
-
-                                let end_angle = {
-                                    let (cos, sin) = axis
-                                        .join(start_pt)
-                                        .unitized()
-                                        .cos_sin_angle_to(axis.join(end_pt).unitized());
-                                    Scalar::from(sin).atan2(cos).rem_euclid(TAU)
-                                };
-
-                                let pt = start_pt
-                                    .transform(re2::AntiEven::axis_angle(axis, end_angle * t));
-
-                                let pt_i = points.len();
-                                points.push(pt);
-                                edges.insert(prev_pt_i, pt_i);
-                                prev_pt_i = pt_i;
-                            }
-                            let new_end_i = push_or_get_pt(
-                                &mut points,
-                                match dir {
-                                    Dir::Fwd => end,
-                                    Dir::Rev => start,
-                                },
-                            );
-                            edges.insert(prev_pt_i, new_end_i);
-                        }
-                    }
-                }
+        for &(_, Edge { curve, dir, .. }) in &self.edges {
+            let (start, _) = interpolated_curve_endpoints[curve].with_dir(dir);
+            let link = match dir {
+                Dir::Fwd => &interpolated_curve_link_fwd,
+                Dir::Rev => &interpolated_curve_link_fwd,
+            };
+            let mut next = link[&start];
+            edges.insert(start, next);
+            while next != start {
+                let cur = next;
+                next = link[&next];
+                edges.insert(cur, next);
             }
         }
 

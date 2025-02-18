@@ -110,7 +110,7 @@ fn main() {
         });
 
     r.render(r.from_time_range((0.)..(1.)), |i, c| {
-        let vertices = vec![
+        let points = vec![
             Vector::point([0., 0.]),
             Vector::point([1., 0.]),
             Vector::point([1., 1.]),
@@ -121,40 +121,41 @@ fn main() {
             Vector::point([0.6 - 0.2 * r.t(i) as f32, 0.4]),
         ];
 
-        let edges = vec![
-            Edge::Line(Line { start: 0, end: 1 }),
-            Edge::Arc(Arc {
+        let curves = vec![
+            Curve::Line(Line { start: 0, end: 1 }),
+            Curve::Arc(Arc {
                 start: 1,
                 end: 3,
                 axis: Vector::point([0., 0.]),
             }),
-            Edge::Line(Line { start: 3, end: 0 }),
+            Curve::Line(Line { start: 3, end: 0 }),
             // Interior hole
-            Edge::Line(Line { start: 4, end: 5 }),
-            Edge::Line(Line { start: 5, end: 6 }),
-            Edge::Line(Line { start: 6, end: 7 }),
-            Edge::Line(Line { start: 7, end: 4 }),
+            Curve::Line(Line { start: 4, end: 5 }),
+            Curve::Line(Line { start: 5, end: 6 }),
+            Curve::Line(Line { start: 6, end: 7 }),
+            Curve::Line(Line { start: 7, end: 4 }),
         ];
 
-        let face_boundary_elements = vec![
-            (0, FaceBoundaryElement::Edge(0, Dir::Fwd)),
-            (0, FaceBoundaryElement::Edge(1, Dir::Fwd)),
-            (0, FaceBoundaryElement::Edge(2, Dir::Fwd)),
+        let edges = vec![
+            (0, Edge {curve: 0, dir: Dir::Fwd, vertices: Some([Vertex {point: 0, twin_edge: Some(2)}, Vertex { point: 1, twin_edge: Some(1)}]), twin: None}),
+            (0, Edge {curve: 1, dir: Dir::Fwd, vertices: Some([Vertex {point: 1, twin_edge: Some(0)}, Vertex { point: 3, twin_edge: Some(2)}]), twin: None}),
+            (0, Edge {curve: 2, dir: Dir::Fwd, vertices: Some([Vertex {point: 3, twin_edge: Some(1)}, Vertex { point: 0, twin_edge: Some(0)}]), twin: None}),
             // Interior hole
-            (0, FaceBoundaryElement::Edge(3, Dir::Fwd)),
-            (0, FaceBoundaryElement::Edge(4, Dir::Fwd)),
-            (0, FaceBoundaryElement::Edge(5, Dir::Fwd)),
-            (0, FaceBoundaryElement::Edge(6, Dir::Fwd)),
+            (0, Edge {curve: 3, dir: Dir::Fwd, vertices: Some([Vertex {point: 4, twin_edge: Some(6)}, Vertex { point: 5, twin_edge: Some(4)}]), twin: None}),
+            (0, Edge {curve: 4, dir: Dir::Fwd, vertices: Some([Vertex {point: 5, twin_edge: Some(3)}, Vertex { point: 6, twin_edge: Some(5)}]), twin: None}),
+            (0, Edge {curve: 5, dir: Dir::Fwd, vertices: Some([Vertex {point: 6, twin_edge: Some(4)}, Vertex { point: 7, twin_edge: Some(6)}]), twin: None}),
+            (0, Edge {curve: 6, dir: Dir::Fwd, vertices: Some([Vertex {point: 7, twin_edge: Some(5)}, Vertex { point: 4, twin_edge: Some(3)}]), twin: None}),
         ];
 
         let geometry = Geometry {
-            vertices,
+            points,
+            curves,
+
             edges,
             faces: 1,
-            face_boundary_elements,
         };
 
-        let Interpolation { points, edges } = geometry.interpolate(0);
+        let Interpolation { points, edges } = geometry.interpolate();
 
         let triangles = triangulate(&points, edges).unwrap();
 
