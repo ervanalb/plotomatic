@@ -122,132 +122,39 @@ fn main() {
         ];
 
         let edges = vec![
-            Curve::Line(Line {}),
-            Curve::Arc(Arc {
+            Edge::Line(Line { start: 0, end: 1 }),
+            Edge::Arc(Arc {
+                start: 1,
+                end: 3,
                 axis: Vector::point([0., 0.]),
             }),
-            Curve::Line(Line {}),
+            Edge::Line(Line { start: 3, end: 0 }),
             // Interior hole
-            Curve::Line(Line {}),
-            Curve::Line(Line {}),
-            Curve::Line(Line {}),
-            Curve::Line(Line {}),
+            Edge::Line(Line { start: 4, end: 5 }),
+            Edge::Line(Line { start: 5, end: 6 }),
+            Edge::Line(Line { start: 6, end: 7 }),
+            Edge::Line(Line { start: 7, end: 4 }),
         ];
 
-        let edge_vertices = vec![
-            EdgeVertex {
-                edge: 0,
-                vertex: 0,
-                dir: Dir::Fwd,
-            },
-            EdgeVertex {
-                edge: 0,
-                vertex: 1,
-                dir: Dir::Rev,
-            },
-            EdgeVertex {
-                edge: 1,
-                vertex: 1,
-                dir: Dir::Fwd,
-            },
-            EdgeVertex {
-                edge: 1,
-                vertex: 3,
-                dir: Dir::Rev,
-            },
-            EdgeVertex {
-                edge: 2,
-                vertex: 3,
-                dir: Dir::Fwd,
-            },
-            EdgeVertex {
-                edge: 2,
-                vertex: 0,
-                dir: Dir::Rev,
-            },
+        let face_boundary_elements = vec![
+            (0, FaceBoundaryElement::Edge(0, Dir::Fwd)),
+            (0, FaceBoundaryElement::Edge(1, Dir::Fwd)),
+            (0, FaceBoundaryElement::Edge(2, Dir::Fwd)),
             // Interior hole
-            EdgeVertex {
-                edge: 3,
-                vertex: 4,
-                dir: Dir::Fwd,
-            },
-            EdgeVertex {
-                edge: 3,
-                vertex: 5,
-                dir: Dir::Rev,
-            },
-            EdgeVertex {
-                edge: 4,
-                vertex: 5,
-                dir: Dir::Fwd,
-            },
-            EdgeVertex {
-                edge: 4,
-                vertex: 6,
-                dir: Dir::Rev,
-            },
-            EdgeVertex {
-                edge: 5,
-                vertex: 6,
-                dir: Dir::Fwd,
-            },
-            EdgeVertex {
-                edge: 5,
-                vertex: 7,
-                dir: Dir::Rev,
-            },
-            EdgeVertex {
-                edge: 6,
-                vertex: 7,
-                dir: Dir::Fwd,
-            },
-            EdgeVertex {
-                edge: 6,
-                vertex: 4,
-                dir: Dir::Rev,
-            },
-        ];
-
-        let face_edges = vec![
-            FaceEdge {
-                edge: 0,
-                dir: Dir::Fwd,
-            },
-            FaceEdge {
-                edge: 1,
-                dir: Dir::Fwd,
-            },
-            FaceEdge {
-                edge: 2,
-                dir: Dir::Fwd,
-            },
-            // Interior hole
-            FaceEdge {
-                edge: 3,
-                dir: Dir::Fwd,
-            },
-            FaceEdge {
-                edge: 4,
-                dir: Dir::Fwd,
-            },
-            FaceEdge {
-                edge: 5,
-                dir: Dir::Fwd,
-            },
-            FaceEdge {
-                edge: 6,
-                dir: Dir::Fwd,
-            },
+            (0, FaceBoundaryElement::Edge(3, Dir::Fwd)),
+            (0, FaceBoundaryElement::Edge(4, Dir::Fwd)),
+            (0, FaceBoundaryElement::Edge(5, Dir::Fwd)),
+            (0, FaceBoundaryElement::Edge(6, Dir::Fwd)),
         ];
 
         let geometry = Geometry {
             vertices,
             edges,
-            edge_vertices,
-            face_edges,
+            faces: 1,
+            face_boundary_elements,
         };
 
-        let Interpolation { points, edges } = geometry.interpolate();
+        let Interpolation { points, edges } = geometry.interpolate(0);
 
         let triangles = triangulate(&points, edges).unwrap();
 

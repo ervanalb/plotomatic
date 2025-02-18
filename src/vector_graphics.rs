@@ -1,14 +1,16 @@
 use ngeom::ops::*;
 use ngeom::re2;
-use ngeom::scalar::*;
 use ngeom_polygon::graph::EdgeSet;
 
 pub type Scalar = f32;
 pub type Point = re2::Vector<Scalar>;
 pub type EdgeIndex = usize;
 pub type VertexIndex = usize;
+pub type FaceIndex = usize;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+pub const TAU: f32 = std::f32::consts::TAU;
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Dir {
     Fwd,
     Rev,
@@ -27,36 +29,37 @@ impl<T> WithDir for (T, T) {
     }
 }
 
-pub struct EdgeVertex {
-    pub edge: EdgeIndex,
-    pub vertex: VertexIndex,
-    pub dir: Dir,
-}
-
-pub struct FaceEdge {
-    pub edge: EdgeIndex,
-    pub dir: Dir,
-}
-
-pub struct Geometry {
-    pub vertices: Vec<Point>,
-    pub edges: Vec<Curve>,
-
-    pub edge_vertices: Vec<EdgeVertex>,
-    pub face_edges: Vec<FaceEdge>,
+#[derive(Clone, Copy, Debug)]
+pub enum FaceBoundaryElement {
+    Vertex(VertexIndex),
+    Edge(EdgeIndex, Dir),
 }
 
 #[derive(Clone, Debug)]
-pub enum Curve {
+pub struct Geometry {
+    pub vertices: Vec<Point>,
+    pub edges: Vec<Edge>,
+    pub faces: FaceIndex,
+
+    pub face_boundary_elements: Vec<(FaceIndex, FaceBoundaryElement)>,
+}
+
+#[derive(Clone, Debug)]
+pub enum Edge {
     Line(Line),
     Arc(Arc),
 }
 
 #[derive(Clone, Debug)]
-pub struct Line {}
+pub struct Line {
+    pub start: VertexIndex,
+    pub end: VertexIndex,
+}
 
 #[derive(Clone, Debug)]
 pub struct Arc {
+    pub start: VertexIndex,
+    pub end: VertexIndex,
     pub axis: Point,
 }
 
@@ -79,68 +82,95 @@ pub struct Interpolation {
 }
 
 impl Geometry {
-    pub fn endpoints(&self, edge: EdgeIndex) -> Option<(VertexIndex, VertexIndex)> {
-        let mut start = None;
-        let mut end = None;
-
-        for ev in &self.edge_vertices {
-            if ev.edge != edge {
-                continue;
-            }
-            let endpoint = match ev.dir {
-                Dir::Fwd => &mut start,
-                Dir::Rev => &mut end,
-            };
-            assert!(endpoint.is_none(), "Found duplicate endpoint for edge");
-            *endpoint = Some(ev.vertex);
-        }
-        match (start, end) {
-            (Some(start), Some(end)) => Some((start, end)),
-            (None, None) => None,
-            _ => panic!("Found just one endpoint (expected 0 or 2)"),
-        }
+    pub fn boundary_elements_for_face(
+        &self,
+        face: FaceIndex,
+    ) -> impl Iterator<Item = FaceBoundaryElement> + use<'_> {
+        self.face_boundary_elements
+            .iter()
+            .filter_map(move |&(fi, be)| (fi == face).then_some(be))
     }
 
-    pub fn interpolate(&self) -> Interpolation {
+    pub fn interpolate(&self, face: FaceIndex) -> Interpolation {
         // First, interpolate the boundaries of the faces
         // and store their connectivity
-        let mut points = self.vertices.clone();
+        let mut points = vec![];
+        let mut new_pt_i = vec![usize::MAX; self.vertices.len()];
+
+        let mut push_or_get_pt = |points: &mut Vec<Point>, pt: VertexIndex| -> usize {
+            let existing_i = new_pt_i[pt];
+            if existing_i != usize::MAX {
+                return existing_i;
+            }
+            let new_i = points.len();
+            points.push(self.vertices[pt]);
+            new_pt_i[pt] = new_i;
+            new_i
+        };
+
         let mut edges = EdgeSet::new();
 
-        for fe in &self.face_edges {
-            match &self.edges[fe.edge] {
-                Curve::Line(_) => {
-                    let (start, end) = self
-                        .endpoints(fe.edge)
-                        .unwrap_or_else(|| panic!("Edge {:?} (line) has no endpoints", fe.edge))
-                        .with_dir(fe.dir);
-
-                    edges.insert(start, end);
+        for face_boundary_element in self.boundary_elements_for_face(face) {
+            match face_boundary_element {
+                FaceBoundaryElement::Vertex(vertex) => {
+                    // Singular point--
+                    // add a self-edge in the polygon
+                    let i = push_or_get_pt(&mut points, vertex);
+                    edges.insert(i, i);
                 }
-                Curve::Arc(arc) => {
-                    let (start, end) = self
-                        .endpoints(fe.edge)
-                        .unwrap_or_else(|| panic!("Edge {:?} (arc) has no endpoints", fe.edge))
-                        .with_dir(fe.dir);
+                FaceBoundaryElement::Edge(edge, dir) => {
+                    match &self.edges[edge] {
+                        &Edge::Line(Line { start, end }) => {
+                            let (start, end) = (start, end).with_dir(dir);
+                            let i = push_or_get_pt(&mut points, start);
+                            let j = push_or_get_pt(&mut points, end);
+                            edges.insert(i, j);
+                        }
+                        &Edge::Arc(Arc { start, end, axis }) => {
+                            let start_pt = self.vertices[start];
+                            let end_pt = self.vertices[end];
 
-                    let mut prev_pt_i = start;
-                    for i in 1..10 {
-                        // TODO dynamic spacing
-                        let t = i as f32 / 10.;
+                            let mut prev_pt_i = push_or_get_pt(
+                                &mut points,
+                                match dir {
+                                    Dir::Fwd => start,
+                                    Dir::Rev => end,
+                                },
+                            );
+                            // TODO dynamic spacing
+                            for i in 1..10 {
+                                let i = match dir {
+                                    Dir::Fwd => i,
+                                    Dir::Rev => 10 - i,
+                                };
+                                let t = i as f32 / 10.;
 
-                        // TODO this shouldn't be hardcoded
-                        let end_angle = 0.25 * std::f32::consts::TAU;
+                                let end_angle = {
+                                    let (cos, sin) = axis
+                                        .join(start_pt)
+                                        .unitized()
+                                        .cos_sin_angle_to(axis.join(end_pt).unitized());
+                                    Scalar::from(sin).atan2(cos).rem_euclid(TAU)
+                                };
 
-                        let start_pt = self.vertices[start];
-                        let pt =
-                            start_pt.transform(re2::AntiEven::axis_angle(arc.axis, end_angle * t));
+                                let pt = start_pt
+                                    .transform(re2::AntiEven::axis_angle(axis, end_angle * t));
 
-                        let pt_i = points.len();
-                        points.push(pt);
-                        edges.insert(prev_pt_i, pt_i);
-                        prev_pt_i = pt_i;
+                                let pt_i = points.len();
+                                points.push(pt);
+                                edges.insert(prev_pt_i, pt_i);
+                                prev_pt_i = pt_i;
+                            }
+                            let new_end_i = push_or_get_pt(
+                                &mut points,
+                                match dir {
+                                    Dir::Fwd => end,
+                                    Dir::Rev => start,
+                                },
+                            );
+                            edges.insert(prev_pt_i, new_end_i);
+                        }
                     }
-                    edges.insert(prev_pt_i, end);
                 }
             }
         }
