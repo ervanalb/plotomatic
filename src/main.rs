@@ -137,14 +137,63 @@ fn main() {
         ];
 
         let edges = vec![
-            (0, Edge {curve: 0, dir: Dir::Fwd, vertices: Some([Vertex {point: 0, twin_edge: Some(2)}, Vertex { point: 1, twin_edge: Some(1)}]), twin: None}),
-            (0, Edge {curve: 1, dir: Dir::Fwd, vertices: Some([Vertex {point: 1, twin_edge: Some(0)}, Vertex { point: 3, twin_edge: Some(2)}]), twin: None}),
-            (0, Edge {curve: 2, dir: Dir::Fwd, vertices: Some([Vertex {point: 3, twin_edge: Some(1)}, Vertex { point: 0, twin_edge: Some(0)}]), twin: None}),
+            (
+                0,
+                Edge {
+                    curve: 0,
+                    dir: Dir::Fwd,
+                    next: 1,
+                },
+            ),
+            (
+                0,
+                Edge {
+                    curve: 1,
+                    dir: Dir::Fwd,
+                    next: 2,
+                },
+            ),
+            (
+                0,
+                Edge {
+                    curve: 2,
+                    dir: Dir::Fwd,
+                    next: 0,
+                },
+            ),
             // Interior hole
-            (0, Edge {curve: 3, dir: Dir::Fwd, vertices: Some([Vertex {point: 4, twin_edge: Some(6)}, Vertex { point: 5, twin_edge: Some(4)}]), twin: None}),
-            (0, Edge {curve: 4, dir: Dir::Fwd, vertices: Some([Vertex {point: 5, twin_edge: Some(3)}, Vertex { point: 6, twin_edge: Some(5)}]), twin: None}),
-            (0, Edge {curve: 5, dir: Dir::Fwd, vertices: Some([Vertex {point: 6, twin_edge: Some(4)}, Vertex { point: 7, twin_edge: Some(6)}]), twin: None}),
-            (0, Edge {curve: 6, dir: Dir::Fwd, vertices: Some([Vertex {point: 7, twin_edge: Some(5)}, Vertex { point: 4, twin_edge: Some(3)}]), twin: None}),
+            (
+                0,
+                Edge {
+                    curve: 3,
+                    dir: Dir::Fwd,
+                    next: 4,
+                },
+            ),
+            (
+                0,
+                Edge {
+                    curve: 4,
+                    dir: Dir::Fwd,
+                    next: 5,
+                },
+            ),
+            (
+                0,
+                Edge {
+                    curve: 5,
+                    dir: Dir::Fwd,
+                    next: 6,
+                },
+            ),
+            (
+                0,
+                Edge {
+                    curve: 6,
+                    dir: Dir::Fwd,
+                    next: 3,
+                },
+            ),
         ];
 
         let geometry = Geometry {
