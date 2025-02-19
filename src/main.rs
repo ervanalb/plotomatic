@@ -40,7 +40,7 @@ fn main() {
         ) -> VertexOutput {
             var out: VertexOutput;
             out.color = model.color;
-            out.clip_position = vec4<f32>(model.position, 0., 1.);
+            out.clip_position = vec4<f32>(model.position * 0.5, 0., 1.);
             return out;
         }
 
@@ -115,10 +115,12 @@ fn main() {
             Vector::point([1., 0.]),
             Vector::point([1., 1.]),
             Vector::point([0., 1.]),
+            /*
             Vector::point([0.4 - 0.2 * r.t(i) as f32, 0.4]),
             Vector::point([0.4 - 0.2 * r.t(i) as f32, 0.6]),
             Vector::point([0.6 - 0.2 * r.t(i) as f32, 0.6]),
             Vector::point([0.6 - 0.2 * r.t(i) as f32, 0.4]),
+            */
         ];
 
         let curves = vec![
@@ -130,10 +132,12 @@ fn main() {
             }),
             Curve::Line(Line { start: 3, end: 0 }),
             // Interior hole
+            /*
             Curve::Line(Line { start: 4, end: 5 }),
             Curve::Line(Line { start: 5, end: 6 }),
             Curve::Line(Line { start: 6, end: 7 }),
             Curve::Line(Line { start: 7, end: 4 }),
+            */
         ];
 
         let edges = vec![
@@ -162,6 +166,7 @@ fn main() {
                 },
             ),
             // Interior hole
+            /*
             (
                 0,
                 Edge {
@@ -194,6 +199,7 @@ fn main() {
                     next: 3,
                 },
             ),
+            */
         ];
 
         let geometry = Geometry {
@@ -202,7 +208,7 @@ fn main() {
 
             edges,
             faces: 1,
-        };
+        }.offset(0.1);
 
         let Interpolation { points, edges } = geometry.interpolate();
 

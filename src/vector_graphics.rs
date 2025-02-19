@@ -113,6 +113,7 @@ pub enum PatchTopologyError {
     Branching,
 }
 
+#[derive(Debug)]
 pub struct Interpolation {
     pub points: Vec<Point>,
     pub edges: EdgeSet,
@@ -258,25 +259,134 @@ impl Geometry {
     }
 
     pub fn offset(&self, amount: Scalar) -> Geometry {
+        #[derive(Debug)]
+        struct OffsetEdge {
+            element: OffsetElement,
+            next: EdgeIndex,
+        }
+
+        #[derive(Debug)]
+        enum OffsetElement {
+            Curve(Curve),
+            ConcaveCap(PointIndex, PointIndex),
+        }
+
+        #[derive(Debug)]
+        struct Endpoint {
+            pt_i: PointIndex,
+            pt: Point,
+            tangent: Point,
+        }
+
+        #[derive(Debug)]
+        struct State {
+            orig_start_pt: Point,
+            start_edge_i: EdgeIndex,
+            start_endpoint: Endpoint,
+
+            prev_edge_i: EdgeIndex,
+            prev_endpoint: Endpoint,
+        }
+
+        fn new_cap(from: Endpoint, axis: Point, to: Endpoint) -> OffsetElement {
+            println!("Generate cap between {:?} and {:?}", from, to);
+            // See if the triangle formed by from - to - axis has positive or negative area
+            // (negative indicates a concave corner
+            if from.pt.join(to.pt).join(axis) < (0.).into() {
+                // TODO epsilon
+                // Corner is concave
+                OffsetElement::ConcaveCap(from.pt_i, to.pt_i)
+            } else {
+                // Corner is convex-- join with arc
+                OffsetElement::Curve(Curve::Arc(Arc {
+                    start: from.pt_i,
+                    end: to.pt_i,
+                    axis,
+                }))
+            }
+        }
+
+        fn push_open(
+            new_edges: &mut Vec<OffsetEdge>,
+            state: &mut Option<State>,
+            orig_start_pt: Point,
+            start_endpoint: Endpoint,
+            curve: Curve,
+            end_endpoint: Endpoint,
+        ) {
+            match state {
+                Some(state) => {
+                    // Allocate cap and edge
+                    let cap_i = new_edges.len();
+                    let edge_i = cap_i + 1;
+
+                    // Push cap
+                    new_edges.push(OffsetEdge {
+                        element: new_cap(
+                            std::mem::replace(&mut state.prev_endpoint, end_endpoint),
+                            orig_start_pt,
+                            start_endpoint,
+                        ),
+                        next: edge_i,
+                    });
+
+                    // Connect prev to cap
+                    new_edges[state.prev_edge_i].next = cap_i;
+
+                    // Push edge
+                    new_edges.push(OffsetEdge {
+                        element: OffsetElement::Curve(curve),
+                        next: edge_i,
+                    });
+
+                    // Set state
+                    state.prev_edge_i = edge_i;
+                    //state.prev_endpoint already set
+                }
+                None => {
+                    // No prior edge--this is the first
+
+                    // Push edge
+                    let edge_i = new_edges.len();
+                    new_edges.push(OffsetEdge {
+                        element: OffsetElement::Curve(curve),
+                        next: edge_i,
+                    });
+
+                    // Set state
+                    *state = Some(State {
+                        orig_start_pt,
+                        start_edge_i: edge_i,
+                        start_endpoint,
+                        prev_edge_i: edge_i,
+                        prev_endpoint: end_endpoint,
+                    });
+                }
+            }
+        }
+
         let mut new_points = vec![];
-        let mut new_curves = vec![];
+        let mut new_edges = vec![];
 
         for fi in 0..self.faces {
             let mut unvisited: BTreeSet<EdgeIndex> = self.edges_for_face(fi).collect();
             while let Some(&start) = unvisited.first() {
-                new_points.clear();
-                new_curves.clear();
+                let mut state: Option<State> = None;
                 for (ei, &Edge { curve, dir, .. }) in self.walk_edges(start) {
                     unvisited.remove(&ei);
-                    println!("Walk {:?}", ei);
                     match &self.curves[curve] {
                         &Curve::SingularPoint(pt) => {
                             let radius = amount.with_dir(dir);
                             if radius > 0. {
-                                new_curves.push(Curve::Circle(Circle {
-                                    axis: self.points[pt].with_dir(dir),
-                                    radius,
-                                }));
+                                assert!(state.is_none());
+                                let edge_i = new_edges.len();
+                                new_edges.push(OffsetEdge {
+                                    element: OffsetElement::Curve(Curve::Circle(Circle {
+                                        axis: self.points[pt].with_dir(dir),
+                                        radius,
+                                    })),
+                                    next: edge_i,
+                                });
                             }
                         }
                         &Curve::Line(Line { start, end }) => {
@@ -285,15 +395,40 @@ impl Geometry {
                             let end_pt = self.points[end];
                             let offset = start_pt.join(end_pt).normal().normalized() * amount;
 
-                            let start_pt_i = new_points.len();
-                            new_points.push(start_pt - offset);
-                            let end_pt_i = new_points.len();
-                            new_points.push(end_pt - offset);
+                            let new_start_pt_i = new_points.len();
+                            let new_start_pt = start_pt - offset;
+                            new_points.push(new_start_pt);
+                            let new_end_pt_i = new_points.len();
+                            let new_end_pt = end_pt - offset;
+                            new_points.push(new_end_pt);
 
-                            new_curves.push(Curve::Line(Line {
-                                start: start_pt_i,
-                                end: end_pt_i,
-                            }));
+                            let tangent = (new_end_pt - new_start_pt).normalized();
+
+                            let start_endpoint = Endpoint {
+                                pt_i: new_start_pt_i,
+                                pt: new_start_pt,
+                                tangent,
+                            };
+
+                            let curve = Curve::Line(Line {
+                                start: new_start_pt_i,
+                                end: new_end_pt_i,
+                            });
+
+                            let end_endpoint = Endpoint {
+                                pt_i: new_end_pt_i,
+                                pt: new_end_pt,
+                                tangent,
+                            };
+
+                            push_open(
+                                &mut new_edges,
+                                &mut state,
+                                start_pt,
+                                start_endpoint,
+                                curve,
+                                end_endpoint,
+                            );
                         }
                         &Curve::Arc(Arc { start, end, axis }) => {
                             let (start, end) = (start, end).with_dir(dir);
@@ -307,14 +442,38 @@ impl Geometry {
                             if new_radius > 0. {
                                 // TODO Epsilon
                                 let new_start_pt_i = new_points.len();
-                                new_points.push(axis + (start_pt - axis) * new_radius);
+                                let new_start_pt = axis + (start_pt - axis) * new_radius;
+                                new_points.push(new_start_pt);
                                 let new_end_pt_i = new_points.len();
-                                new_points.push(axis + (end_pt - axis) * new_radius);
-                                new_curves.push(Curve::Arc(Arc {
+                                let new_end_pt = axis + (end_pt - axis) * new_radius;
+                                new_points.push(new_end_pt);
+
+                                let start_endpoint = Endpoint {
+                                    pt_i: new_start_pt_i,
+                                    pt: new_start_pt,
+                                    tangent: axis.join(new_start_pt).normal().normalized(),
+                                };
+
+                                let curve = Curve::Arc(Arc {
                                     start: new_start_pt_i,
                                     end: new_end_pt_i,
                                     axis,
-                                }));
+                                });
+
+                                let end_endpoint = Endpoint {
+                                    pt_i: new_end_pt_i,
+                                    pt: new_end_pt,
+                                    tangent: axis.join(new_end_pt).normal().normalized(),
+                                };
+
+                                push_open(
+                                    &mut new_edges,
+                                    &mut state,
+                                    start_pt,
+                                    start_endpoint,
+                                    curve,
+                                    end_endpoint,
+                                );
                             }
                         }
                         &Curve::Circle(Circle { axis, radius }) => {
@@ -324,18 +483,70 @@ impl Geometry {
 
                             if new_radius > 0. {
                                 // TODO: Epsilon
-                                new_curves.push(Curve::Circle(Circle {
-                                    axis,
-                                    radius: new_radius,
-                                }));
+                                assert!(state.is_none());
+                                let edge_i = new_edges.len();
+                                new_edges.push(OffsetEdge {
+                                    element: OffsetElement::Curve(Curve::Circle(Circle {
+                                        axis,
+                                        radius: new_radius,
+                                    })),
+                                    next: edge_i,
+                                });
                             }
                         }
                     }
                 }
-                dbg!(&new_points, &new_curves);
+
+                if let Some(state) = state {
+                    // Add final cap
+                    // Push cap
+                    let cap_i = new_edges.len();
+                    new_edges.push(OffsetEdge {
+                        element: new_cap(
+                            state.prev_endpoint,
+                            state.orig_start_pt,
+                            state.start_endpoint,
+                        ),
+                        next: state.start_edge_i,
+                    });
+
+                    // Connect prev edge to cap
+                    new_edges[state.prev_edge_i].next = cap_i;
+                }
             }
         }
-        todo!();
+
+        // TODO temporary conversion back to geometry
+        let edges = new_edges
+            .iter()
+            .enumerate()
+            .map(|(i, &OffsetEdge { element: _, next })| {
+                (
+                    0,
+                    Edge {
+                        curve: i,
+                        dir: Dir::Fwd,
+                        next,
+                    },
+                )
+            })
+            .collect();
+        let curves = new_edges
+            .into_iter()
+            .map(|OffsetEdge { element, next: _ }| match element {
+                OffsetElement::ConcaveCap(_, _) => {
+                    panic!("Concave corners not yet supported!");
+                }
+                OffsetElement::Curve(curve) => curve,
+            })
+            .collect();
+
+        Geometry {
+            points: new_points,
+            curves,
+            edges,
+            faces: 1,
+        }
     }
 }
 
@@ -352,10 +563,12 @@ mod test {
             Vector::point([1., 0.]),
             Vector::point([1., 1.]),
             Vector::point([0., 1.]),
+            /*
             Vector::point([0.4, 0.4]),
             Vector::point([0.4, 0.6]),
             Vector::point([0.6, 0.6]),
             Vector::point([0.6, 0.4]),
+            */
         ];
 
         let curves = vec![
@@ -367,10 +580,12 @@ mod test {
             }),
             Curve::Line(Line { start: 3, end: 0 }),
             // Interior hole
+            /*
             Curve::Line(Line { start: 4, end: 5 }),
             Curve::Line(Line { start: 5, end: 6 }),
             Curve::Line(Line { start: 6, end: 7 }),
             Curve::Line(Line { start: 7, end: 4 }),
+            */
         ];
 
         let edges = vec![
@@ -399,6 +614,7 @@ mod test {
                 },
             ),
             // Interior hole
+            /*
             (
                 0,
                 Edge {
@@ -431,6 +647,7 @@ mod test {
                     next: 3,
                 },
             ),
+            */
         ];
 
         let geometry = Geometry {
@@ -441,6 +658,7 @@ mod test {
             faces: 1,
         };
 
-        geometry.offset(0.1);
+        dbg!(geometry.offset(0.1).interpolate());
+        panic!();
     }
 }
