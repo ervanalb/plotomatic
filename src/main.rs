@@ -141,74 +141,56 @@ fn main() {
         ];
 
         let edges = vec![
-            (
-                0,
-                Edge {
-                    curve: 0,
-                    dir: Dir::Fwd,
-                    next: 1,
-                },
-            ),
-            (
-                0,
-                Edge {
-                    curve: 1,
-                    dir: Dir::Fwd,
-                    next: 2,
-                },
-            ),
-            (
-                0,
-                Edge {
-                    curve: 2,
-                    dir: Dir::Fwd,
-                    next: 0,
-                },
-            ),
+            Edge {
+                curve: 0,
+                dir: Dir::Fwd,
+                next: 1,
+            },
+            Edge {
+                curve: 1,
+                dir: Dir::Fwd,
+                next: 2,
+            },
+            Edge {
+                curve: 2,
+                dir: Dir::Fwd,
+                next: 0,
+            },
             // Interior hole
             /*
-            (
-                0,
                 Edge {
                     curve: 3,
                     dir: Dir::Fwd,
                     next: 4,
                 },
-            ),
-            (
-                0,
                 Edge {
                     curve: 4,
                     dir: Dir::Fwd,
                     next: 5,
                 },
-            ),
-            (
-                0,
                 Edge {
                     curve: 5,
                     dir: Dir::Fwd,
                     next: 6,
                 },
-            ),
-            (
-                0,
                 Edge {
                     curve: 6,
                     dir: Dir::Fwd,
                     next: 3,
                 },
-            ),
             */
         ];
 
-        let geometry = Geometry {
+        let geometry = Geometry::<Proper> {
             points,
             curves,
-
             edges,
-            faces: 1,
-        }.offset(0.1);
+
+            _state: Default::default(),
+        }
+        .offset(0.1);
+
+        let geometry = unsafe { geometry.as_proper_unchecked() };
 
         let Interpolation { points, edges } = geometry.interpolate();
 
