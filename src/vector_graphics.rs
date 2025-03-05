@@ -71,13 +71,13 @@ pub struct Proper;
 pub struct Improper;
 
 #[derive(Clone, Debug, Default)]
-pub struct Geometry<S = Proper> {
+pub struct Geometry<S> {
     // Embedding
     pub points: Vec<Point>,
     pub curves: Vec<Curve>,
 
     // Topology
-    pub edges: Vec<Edge>, // IDEA: get rid of concept of face?
+    pub edges: Vec<Edge>,
 
     pub _state: PhantomData<S>,
 }
@@ -107,6 +107,21 @@ pub struct Arc {
 pub struct Circle {
     pub axis: Point,
     pub radius: Scalar,
+}
+
+impl Curve {
+    pub fn endpoints(&self) -> Option<(PointIndex, PointIndex)> {
+        match self {
+            &Curve::SingularPoint(_) => None,
+            &Curve::Line(Line { start, end }) => Some((start, end)),
+            &Curve::Arc(Arc {
+                start,
+                end,
+                axis: _,
+            }) => Some((start, end)),
+            &Curve::Circle(_) => None,
+        }
+    }
 }
 
 //#[derive(Clone, Debug)]
@@ -153,6 +168,27 @@ impl<'a> Iterator for EdgeWalker<'a> {
     }
 }
 
+fn intersect_segments(p1a: Point, p1b: Point, p2a: Point, p2b: Point) -> Option<Point> {
+    let l1 = p1a.join(p1b);
+    let l1w = l1.weight_norm();
+    assert!(l1w > EPSILON.into());
+    let l2 = p2a.join(p2b);
+    let l2w = l2.weight_norm();
+    assert!(l2w > EPSILON.into());
+
+    let da = l1.join(p2a);
+    let db = l1.join(p2b);
+    let test1 =
+        da > l1w * EPSILON && db < l1w * -EPSILON || db > l1w * EPSILON && da < l1w * -EPSILON;
+
+    let da = l2.join(p1a);
+    let db = l2.join(p1b);
+    let test2 =
+        da > l2w * EPSILON && db < l2w * -EPSILON || db > l2w * EPSILON && da < l2w * -EPSILON;
+
+    (test1 && test2).then(|| l1.meet(l2).unitized())
+}
+
 impl<S> Geometry<S> {
     pub fn walk_edges(&self, start: EdgeIndex) -> EdgeWalker<'_> {
         let edge = &self.edges[start];
@@ -162,11 +198,228 @@ impl<S> Geometry<S> {
             next: Some((start, edge)),
         }
     }
-
-    // TODO EXTEND via concatenation
 }
 
-impl Geometry {
+impl<S> Geometry<S> {
+    // Adjusts the edge topology to handle splitting a curve `a`
+    // into two curves `a b`
+    fn split_curve_topology(&mut self, a: CurveIndex, b: CurveIndex) {
+        // Adjust edge topology
+        for ei in 0..self.edges.len() {
+            let Edge { curve, dir, next } = self.edges[ei];
+            if curve == a && matches!(dir, Dir::Fwd) {
+                let eib = self.edges.len();
+                self.edges.push(Edge {
+                    curve: b,
+                    dir: Dir::Fwd,
+                    next,
+                });
+                self.edges[ei].next = eib;
+            }
+        }
+
+        for prev in 0..self.edges.len() {
+            let Edge { next: ei, .. } = self.edges[prev];
+            let Edge {
+                curve,
+                dir,
+                next: _,
+            } = self.edges[ei];
+            if curve == a && matches!(dir, Dir::Rev) {
+                let eib = self.edges.len();
+                self.edges.push(Edge {
+                    curve: b,
+                    dir: Dir::Rev,
+                    next: ei,
+                });
+                self.edges[prev].next = eib;
+            }
+        }
+    }
+
+    fn split_all_curves_at_intersections(&mut self) {
+        for c1 in 0..self.curves.len() {
+            // self.curves will change during iteration--but the outer for-loop won't change.
+            // This is OK due to the non-intersection guarantees of the newly pushed curves
+            for c2 in (c1 + 1)..self.curves.len() {
+                match (&self.curves[c1], &self.curves[c2]) {
+                    (
+                        &Curve::Line(Line {
+                            start: start1,
+                            end: end1,
+                        }),
+                        &Curve::Line(Line {
+                            start: start2,
+                            end: end2,
+                        }),
+                    ) => {
+                        let start1pt = self.points[start1];
+                        let end1pt = self.points[end1];
+                        let start2pt = self.points[start2];
+                        let end2pt = self.points[end2];
+
+                        if let Some(intersection_pt) =
+                            intersect_segments(start1pt, end1pt, start2pt, end2pt)
+                        {
+                            // Push intersection point
+                            let intersection_ix = self.points.len();
+                            self.points.push(intersection_pt);
+
+                            // Rewrite existing 2 curves and push new curves
+                            self.curves[c1] = Curve::Line(Line {
+                                start: start1,
+                                end: intersection_ix,
+                            });
+                            self.curves[c2] = Curve::Line(Line {
+                                start: start2,
+                                end: intersection_ix,
+                            });
+                            let c1b = self.curves.len();
+                            self.curves.push(Curve::Line(Line {
+                                start: intersection_ix,
+                                end: end1,
+                            }));
+                            let c2b = self.curves.len();
+                            self.curves.push(Curve::Line(Line {
+                                start: intersection_ix,
+                                end: end2,
+                            }));
+
+                            // Adjust edge topology
+                            self.split_curve_topology(c1, c1b);
+                            self.split_curve_topology(c2, c2b);
+                        }
+                    }
+                    _ => {} // TODO
+                }
+            }
+        }
+    }
+
+    fn recalculate_connectivity(&mut self) {
+        let mut unvisited: BTreeSet<EdgeIndex> = (0..self.edges.len()).collect();
+        let mut new_edges = vec![];
+        let mut edge_loop = vec![];
+        while let Some(&start_edge) = unvisited.first() {
+            unvisited.remove(&start_edge);
+            let edge = self.edges[start_edge];
+            let Some((start_pt, mut pt)) = self.curves[edge.curve]
+                .endpoints()
+                .map(|ep| ep.with_dir(edge.dir))
+            else {
+                // Push self-loop with no points into the output
+                let i = new_edges.len();
+                new_edges.push(Edge {
+                    curve: edge.curve,
+                    dir: edge.dir,
+                    next: i,
+                });
+                continue;
+            };
+            println!("Start at edge {:?}, pt {:?}", start_edge, start_pt);
+            edge_loop.clear();
+            edge_loop.push((start_pt, start_edge));
+
+            let cycle_start = loop {
+                // See if we have found a loop and are done
+                if let Some(cycle_start) =
+                    edge_loop.iter().position(|&(start_pt, _)| start_pt == pt)
+                {
+                    println!("Found cycle (cycle_start: {:?})", cycle_start);
+                    break Some(cycle_start);
+                }
+
+                // Find & walk next edge
+                let Some((next_edge, next_pt)) = unvisited
+                    .iter()
+                    .filter_map(|&i| {
+                        let Edge {
+                            curve,
+                            dir,
+                            next: _,
+                        } = self.edges[i];
+                        let ep = self.curves[curve].endpoints()?;
+                        let (from, to) = ep.with_dir(dir);
+                        if from != pt {
+                            return None;
+                        }
+                        Some((i, to))
+                    })
+                    .min_by_key(|&(_, pt)| pt)
+                // TODO take edge with sharpest turn angle
+                else {
+                    // No cycle found
+                    println!("No cycle found! Discarding {:?}", edge_loop);
+                    break None;
+                };
+                println!("Walk next edge {:?} to pt {:?}", next_edge, next_pt);
+
+                unvisited.remove(&next_edge);
+                edge_loop.push((pt, next_edge));
+                pt = next_pt;
+            };
+            let Some(cycle_start) = cycle_start else {
+                continue;
+            };
+
+            // Push cycle
+            let start_i = new_edges.len();
+            let mut i = start_i;
+            for &(_, ei) in &edge_loop[cycle_start..] {
+                let Edge {
+                    curve,
+                    dir,
+                    next: _,
+                } = self.edges[ei];
+                i = new_edges.len();
+                new_edges.push(Edge {
+                    curve,
+                    dir,
+                    next: i + 1,
+                });
+            }
+            new_edges[i].next = start_i;
+        }
+
+        self.edges = new_edges;
+    }
+}
+
+impl Geometry<Improper> {
+    pub fn extend<S>(&mut self, other: &Geometry<S>) {
+        let point_offset = self.points.len();
+        self.points.extend(&other.points);
+
+        let curve_offset = self.curves.len();
+        self.curves.reserve(other.curves.len());
+        for curve in &other.curves {
+            let new_curve = match curve {
+                &Curve::SingularPoint(ix) => Curve::SingularPoint(point_offset + ix),
+                &Curve::Line(Line { start, end }) => Curve::Line(Line {
+                    start: point_offset + start,
+                    end: point_offset + end,
+                }),
+                &Curve::Arc(Arc { start, end, axis }) => Curve::Arc(Arc {
+                    start: point_offset + start,
+                    end: point_offset + end,
+                    axis,
+                }),
+                Curve::Circle(c) => Curve::Circle(c.clone()),
+            };
+            self.curves.push(new_curve);
+        }
+
+        let edge_offset = self.edges.len();
+        self.edges.reserve(other.edges.len());
+        for &Edge { curve, dir, next } in &other.edges {
+            self.edges.push(Edge {
+                curve: curve_offset + curve,
+                dir,
+                next: edge_offset + next,
+            });
+        }
+    }
+
     pub unsafe fn as_proper_unchecked(self) -> Geometry<Proper> {
         Geometry::<Proper> {
             points: self.points,
@@ -177,7 +430,34 @@ impl Geometry {
         }
     }
 
-    // TODO MAKE PROPER via clipping
+    pub fn clip(mut self) -> Geometry<Proper> {
+        // Split all curves at curve-curve intersections
+        self.split_all_curves_at_intersections();
+
+        // TODO split all curves at curve-point intersections
+
+        // TODO combine points that are close to each other
+
+        // Recalculate connectivity by walking loops (discarding spurs)
+        self.recalculate_connectivity();
+
+        // TODO Remove unfilled areas according to fill rule
+
+        dbg!(self);
+        todo!();
+    }
+}
+
+impl From<Geometry<Proper>> for Geometry<Improper> {
+    fn from(value: Geometry<Proper>) -> Geometry<Improper> {
+        Geometry::<Improper> {
+            points: value.points,
+            curves: value.curves,
+            edges: value.edges,
+
+            _state: Default::default(),
+        }
+    }
 }
 
 impl Geometry<Proper> {
@@ -278,7 +558,7 @@ impl Geometry<Proper> {
         Interpolation { points, edges }
     }
 
-    pub fn offset(&self, amount: Scalar) -> Geometry {
+    pub fn offset(&self, amount: Scalar) -> Geometry<Improper> {
         #[derive(Debug)]
         struct OffsetEdge {
             curve: Curve,
@@ -654,5 +934,162 @@ mod test {
 
         dbg!(geometry.offset(0.1));
         panic!();
+    }
+
+    #[test]
+    fn test_intersect_segments() {
+        // Segments intersect
+        assert_eq!(
+            intersect_segments(
+                Vector::point([0., 0.]),
+                Vector::point([10., 10.]),
+                Vector::point([10., 0.]),
+                Vector::point([0., 10.]),
+            ),
+            Some(Vector::point([5., 5.]))
+        );
+
+        // Non-intersecting
+        assert!(intersect_segments(
+            Vector::point([0., 0.]),
+            Vector::point([1., 1.]),
+            Vector::point([3., 0.]),
+            Vector::point([0., 3.]),
+        )
+        .is_none());
+
+        // End-to-end
+        assert!(intersect_segments(
+            Vector::point([0., 0.]),
+            Vector::point([1., 1.]),
+            Vector::point([1., 1.]),
+            Vector::point([2., 0.]),
+        )
+        .is_none());
+
+        // Parallel overlapping segments
+        assert!(intersect_segments(
+            Vector::point([0., 0.]),
+            Vector::point([4., 4.]),
+            Vector::point([1., 1.]),
+            Vector::point([3., 3.]),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn test_split_all_curves_at_intersections() {
+        let points = vec![
+            Vector::point([0., 0.]),
+            Vector::point([1., 1.]),
+            Vector::point([1., 0.]),
+            Vector::point([0., 1.]),
+        ];
+
+        let curves = vec![
+            Curve::Line(Line { start: 0, end: 1 }),
+            Curve::Line(Line { start: 2, end: 3 }),
+        ];
+
+        let edges = vec![
+            Edge {
+                curve: 0,
+                dir: Dir::Fwd,
+                next: 1,
+            },
+            Edge {
+                curve: 0,
+                dir: Dir::Rev,
+                next: 0,
+            },
+            Edge {
+                curve: 1,
+                dir: Dir::Fwd,
+                next: 3,
+            },
+            Edge {
+                curve: 1,
+                dir: Dir::Rev,
+                next: 2,
+            },
+        ];
+
+        let mut geometry = Geometry::<Improper> {
+            points,
+            curves,
+            edges,
+            _state: Default::default(),
+        };
+
+        geometry.split_all_curves_at_intersections();
+
+        // All edges should now be split:
+        assert_eq!(
+            geometry.edges[geometry.edges[geometry.edges[0].next].next].next,
+            1
+        );
+        assert_eq!(
+            geometry.edges[geometry.edges[geometry.edges[2].next].next].next,
+            3
+        );
+    }
+    #[test]
+    fn test_recalculate_connectivity() {
+        let points = vec![
+            // Hash symbol #
+            Vector::point([0.1, 0.1]), // 0
+            Vector::point([0.9, 0.1]), // 1
+            Vector::point([0.9, 0.9]), // 2
+            Vector::point([0.1, 0.9]), // 3
+            Vector::point([0., 0.1]),
+            Vector::point([1., 0.1]),
+            Vector::point([0.9, 0.]),
+            Vector::point([0.9, 1.]),
+            Vector::point([1., 0.9]),
+            Vector::point([0., 0.9]),
+            Vector::point([0.1, 1.]),
+            Vector::point([0.1, 0.]),
+        ];
+
+        let curves = vec![
+            Curve::Line(Line { start: 4, end: 0 }),
+            Curve::Line(Line { start: 0, end: 1 }),
+            Curve::Line(Line { start: 1, end: 5 }),
+            Curve::Line(Line { start: 6, end: 1 }),
+            Curve::Line(Line { start: 1, end: 2 }),
+            Curve::Line(Line { start: 2, end: 7 }),
+            Curve::Line(Line { start: 8, end: 2 }),
+            Curve::Line(Line { start: 2, end: 3 }),
+            Curve::Line(Line { start: 3, end: 9 }),
+            Curve::Line(Line { start: 10, end: 3 }),
+            Curve::Line(Line { start: 3, end: 0 }),
+            Curve::Line(Line { start: 0, end: 11 }),
+        ];
+
+        let edges: Vec<_> = (0..12)
+            .map(|i| Edge {
+                curve: i,
+                dir: Dir::Fwd,
+                next: (i + 1) % 12,
+            })
+            .collect();
+
+        let mut geometry = Geometry::<Improper> {
+            points,
+            curves,
+            edges,
+            _state: Default::default(),
+        };
+
+        geometry.recalculate_connectivity();
+
+        assert!(geometry.edges.len() == 4);
+        for &Edge { curve, .. } in &geometry.edges {
+            let Curve::Line(Line { start, end, .. }) = geometry.curves[curve] else {
+                panic!();
+            };
+            assert!(start < 4); // Only the first 4 points should be used
+            assert!(end < 4); // Only the first 4 points should be used
+        }
     }
 }
